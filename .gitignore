@@ -1,0 +1,9 @@
+# Compiled output
+bin/
+*.class
+
+# IDE noise
+.settings/
+.metadata/
+*.iml
+.idea/

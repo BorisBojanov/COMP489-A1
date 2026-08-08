@@ -72,6 +72,9 @@ COMP489-A1/
 mkdir -p bin
 javac -d bin $(find src -name "*.java")     # Windows PowerShell: see note below
 
+javac -d bin .\src\comp489\a1\*.java
+java -cp bin comp489.a1.SimpleWebServer   
+
 # then run any example, e.g.:
 java -cp bin dcj.examples.networking.DataStreamsDemo
 java -cp bin dcj.examples.networking.PipedStreamExample

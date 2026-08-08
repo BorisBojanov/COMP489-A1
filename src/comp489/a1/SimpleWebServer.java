@@ -2,12 +2,13 @@ package comp489.a1;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
-import java.nio.file.InvalidPathException;
+// import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.charset.StandardCharsets;
@@ -38,7 +39,7 @@ public class SimpleWebServer {
     // private static final String DOCROOT = "C:\\Users\\boris\\ownCloud (2)\\Active_COURSES\\COMP489 Distributed Computing\\COMP489-A1\\COMP489-A1\\src\\comp489\\a1\\www";
     private static final String DROOT = Paths.get("src","comp489","a1","www").toAbsolutePath().normalize().toString();
     private static final Path root = Paths.get(DROOT).toAbsolutePath().normalize();
-    private static final String parentDir = Path.of("").toAbsolutePath().getParent().toString();
+    // private static final String parentDir = Path.of("").toAbsolutePath().getParent().toString();
     private static final String INDEX_FILE = "index.html";
     public static void main(String[] args) {
         // print root, and if (!Files.isDirectory(root)) print an error and exit
@@ -47,20 +48,26 @@ public class SimpleWebServer {
             System.out.println("Error: Document root is not a directory.");
             return;
         }
-
         int port = (args.length > 0) ? Integer.parseInt(args[0]) : 9806;
         //Then make the docroot args[1] with a default, so you can override it without recompiling.
         String docRoot = (args.length > 1) ? args[1] : DROOT;
 
         try (ServerSocket server = new ServerSocket(port)) {
+            
             System.out.println("SimpleWebServer listening on port " + port + " ... (Ctrl+C to stop)");
             
             while (true) {
-                try (Socket client = server.accept()) {
-                    handle(client, root);
-                } catch (IOException e) {
-                    System.out.println("Connection error: " + e.getMessage());
-                }
+                Socket client = server.accept();
+                final Path dr = Paths.get(docRoot).toAbsolutePath().normalize();
+
+                // Create a new thread to handle the client connecion
+                new Thread(() -> {
+                    try (client) {
+                            handle(client, dr);
+                    } catch (IOException e) {
+                        System.out.println("Connection error: " + e.getMessage());
+                    }
+                }).start();
             }
         } catch (IOException e) {
             System.out.println("Could not listen on port " + port + ": " + e.getMessage());
@@ -78,6 +85,40 @@ public class SimpleWebServer {
         rawOut.flush();
     }
 
+    private static void send404(OutputStream rawOut, String message) throws IOException {
+        String body = message;
+        String response = "HTTP/1.0 404 Not Found\r\n"
+                + "Content-Type: text/plain\r\n"
+                + "Content-Length: " + body.getBytes().length + "\r\n"
+                + "\r\n"
+                + body;
+        rawOut.write(response.getBytes());
+        rawOut.flush();
+    }
+
+    private static void sendConfirmation(OutputStream rawOut, String message) throws IOException {
+        String body = message;
+        String response = "HTTP/1.0 200 OK\r\n"
+                + "Content-Type: text/plain\r\n"
+                + "Content-Length: " + body.getBytes().length + "\r\n"
+                + "\r\n"
+                + body;
+        rawOut.write(response.getBytes());
+        rawOut.flush();
+    }
+
+    private static void serve(OutputStream rawOut, Path imagePath) throws IOException {
+        String contentType = Files.probeContentType(imagePath);
+        long contentLength = Files.size(imagePath);
+        String responseHeader = "HTTP/1.0 200 OK\r\n"
+                + "Content-Type: " + contentType + "\r\n"
+                + "Content-Length: " + contentLength + "\r\n"
+                + "\r\n";
+        rawOut.write(responseHeader.getBytes());
+        Files.copy(imagePath, rawOut);
+        rawOut.flush();
+    }
+    
     private static void handle(Socket client, Path root) throws IOException {
         
         BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
@@ -101,6 +142,7 @@ public class SimpleWebServer {
         //     a blank line, then the file BYTES (read with a FileInputStream and
         //     write to rawOut so images survive)
         //   * if not: send "HTTP/1.0 404 Not Found" + a short message
+        // 1. Reject anything that is not GET with 400 Bad Request
         if (!method.equals("GET")) {
             sendBadRequest(rawOut, "Method '" + method + "' not supported. Only GET is allowed.");
             return;
@@ -121,40 +163,34 @@ public class SimpleWebServer {
         */
         try {
             path = java.net.URLDecoder.decode(path, StandardCharsets.UTF_8);
-            // 2. Resolve Path (Throws InvalidPathException on illegal characters like : * < >)
-            // Replace "server_root" with your actual project document root folder path
-            Path docRoot = root; // Use the actual document root
-            Path targetFile = docRoot.resolve(path.substring(1)).normalize();
-
-            if (!Files.isRegularFile(targetFile) || !Files.isReadable(targetFile)) {
-                /*isRegularFile collapses "doesn't exist" and "is a directory" into one check*/
-                sendBadRequest(rawOut, "File not found: " + targetFile.toString()); 
-                return;
-            }
             //if it ends with '/' (or is just "/"), append the default document name
             if (path.endsWith("/")) {
                 path += INDEX_FILE;
             }
             // strip leading '/' so resolve() doesn't discard root
-            if (path.startsWith("/")) {
-                path = path.substring(1);
+            String rel = path.startsWith("/") ? path.substring(1) : path;
+            
+            // 2. Resolve Path (Throws InvalidPathException on illegal characters like : * < >)
+            // Replace "server_root" with your actual project document root folder path
+            // Use the actual document root
+            // Path targetFile = docRoot.resolve(path.substring(1)).normalize();
+            Path requestedFile = root.resolve(rel).normalize();   // resolve ONCE
+
+            // Check th econtent type of the requested file using Files.probeContentType(requestedFile) and send the appropriate Content-Type header in the response. If the content type is null, you can default to "application/octet-stream" or "text/plain".
+            if (!Files.isRegularFile(requestedFile) || !Files.isReadable(requestedFile)) {
+                /*isRegularFile collapses "doesn't exist" and "is a directory" into one check*/
+                send404(rawOut, "File not found: " + requestedFile.toString()); 
+                return;
             }
-            // 4. Resolve against the root, normalize, and verify it is still under root
-            Path requestedFile = root.resolve(path).normalize();
-            
-            
+
+            if (!requestedFile.startsWith(root)) {   // root must be absolute+normalized (it is)
+                send404(rawOut, "Forbidden");        // or 403
+                return;
+            }
 
             // If file exists send "HTTP/1.0 200 OK", a Content-Type header, a blank line, then the file BYTES (read with a FileInputStream and write to rawOut so images survive)
-            String body = "You requested method='" + method + "' path='" + requestedFile.toString()
-                    + "'. Replace this scaffold with real file serving.";
-            String response = "HTTP/1.0 200 OK\r\n"
-                    + "Content-Type: text/plain; charset=utf-8\r\n"
-                    + "Content-Length: " + body.getBytes(StandardCharsets.UTF_8).length + "\r\n"
-                    + "\r\n"
-                    + body + "\r\n"
-                    + requestedFile + "\r\n";
-            rawOut.write(response.getBytes());
-            rawOut.flush();
+            // sendConfirmation(rawOut, "File found: " + requestedFile.toString());
+            serve(rawOut, requestedFile);
 
             //return result
         } catch (IllegalArgumentException e) {

@@ -1,0 +1,9 @@
+Document root: C:\Users\boris\ownCloud (2)\Active_COURSES\COMP489 Distributed Computing\COMP489-A1\COMP489-A1\src\comp489\a1\www
+SimpleWebServer listening on port 9806 ... (Ctrl+C to stop)
+request: GET / HTTP/1.1
+request: GET /nope.html HTTP/1.1
+request: GET /picture.JPEG HTTP/1.1
+Connection error: Connection reset by peer
+request: GET /README.md HTTP/1.1
+request: GET /%zz HTTP/1.1
+request: GET /../SimpleWebServer.java HTTP/1.1

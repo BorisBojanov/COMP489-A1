@@ -25,6 +25,10 @@ import java.net.Socket;
  * It is a plain TCP Socket client. Start by pointing it at a real web server
  * (google.com:80) to confirm you can send a request and read a response, THEN
  * switch it to talk to your proxy.
+ * 
+ * need to read the response body from the raw InputStream by byte count 
+ * (using the Content-Length you parse from the headers) 
+ * rather than readLine
  */
 public class SimpleClient {
 
@@ -65,3 +69,4 @@ public class SimpleClient {
         }
     }
 }
+   

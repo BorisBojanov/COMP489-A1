@@ -42,21 +42,16 @@ public class ProxyServer {
 
     public static void main(String[] args) {
         String host = "myProxyServer";
-        int remotePort = 80;
-        int localPort = 8888;
+        int remotePort = 9806;  // the port of the target web server (e.g., SimpleWebServer)
+        int localPort = 8888;   // the port on which this proxy listens for client connections
         
         int listenPort = (args.length > 0) ? Integer.parseInt(args[0]) : localPort;
 
         try (ServerSocket listen = new ServerSocket(listenPort)) {
             System.out.println("ProxyServer listening on port " + listenPort + " ... (Ctrl+C to stop)");
             
-            // runServer(host, remotePort, localPort); // never returns
-
-            while (true) {
-                Socket client = listen.accept();
-                // Give each client to its own thread so the proxy stays responsive.
-                new Thread(() -> serviceClient(client)).start();
-            }
+            runServer(host, remotePort, localPort); // never returns
+            
         } catch (IOException e) {
             System.out.println("Proxy could not listen on port " + listenPort + ": " + e.getMessage());
         }
@@ -73,6 +68,7 @@ public class ProxyServer {
         // The example below shows the two-way relay structure; wire it to your
         // real 'target' socket once you have parsed the destination.
 
+        
         String targetHost = "example.com";   
         int targetPort = 80;
         
@@ -163,107 +159,118 @@ public class ProxyServer {
 
     // String targetHost , int targetPort
     private static String getTargetHost(Socket client) {
-        // TODO: implement logic to extract the target host from the client request
+        // gets the target host from the client request
         String hostname = client.getInetAddress().getHostName();
         return hostname != null ? hostname : "localhost";
     }
     private static int getTargetPort(Socket client) {
-        // TODO: implement logic to extract the target port from the client request
+        // extracts the target port from the client request
         int targetport = client.getPort();
         return targetport != 0 ? targetport : 80; // default to port 80 if not specified
     }
 
+    private static void clientToserverRequestThread (InputStream streamFromClient, OutputStream streamToServer) {
+        // a thread to read the client's requests
+        // and pass them to the server. A separate
+        // thread for asynchronous.
+        final byte[] request = new byte[1024];
+
+        Thread t = new Thread() {
+            public void run() {
+                int bytesRead;
+                try {
+                    while ((bytesRead = streamFromClient.read(request)) != -1) {
+                        streamToServer.write(request, 0, bytesRead);
+                        streamToServer.flush();
+                    }
+                } catch (IOException e) {
+                    // ignore
+                }
+
+                // the client closed the connection
+                // to us, so close our connection to
+                // the server.
+                try {
+                    streamToServer.close();
+                } catch (IOException e) {}
+                try {
+                    streamFromClient.close();
+                } catch (IOException e) {}
+            }
+        };
+        // Start the client-to-server request thread
+        // running
+        t.start();
+
+    }
+    
     private static void runServer (String host, int remotePort, int localPort) throws IOException {
         // Create a ServerSocket to listen for connections
         ServerSocket serverSocket = new ServerSocket(localPort);
 
-        final byte[] request = new byte[1024];
+        
+        // final byte[] request = new byte[1024];
         byte[] reply = new byte[4096];
-
-        while (true) {
-            Socket client = null;
-            Socket server = null;
-
-            try {
-                // Wait for a connection on the local port
-                client = serverSocket.accept();
-
-                InputStream streamFromClient = client.getInputStream();
-                OutputStream streamToClient = client.getOutputStream();
-
-                // Make a connection to the real server.
-                // If we cannot connect to the server, send
-                // an error to the client, disconnect, and
-                // continue waiting for connections.
+        
+        {   
+            while (true) {
+                Socket client = null;
+                Socket server = null;
+                
                 try {
-                    server = new Socket(host, remotePort);
-                } catch (IOException e) {
-                    PrintWriter out = new PrintWriter(streamToClient);
-                    out.println("Proxy server cannot connect to " + host + ":" + remotePort + "");
-                    out.flush();
-                    client.close();
-                    continue;
-                }
+                    // Wait for a connection on the local port
+                    client = serverSocket.accept();
+                    System.out.println("Accepted connection from " + client.getInetAddress() + ":" + client.getPort());
+                    serviceClient(client);
+                    InputStream streamFromClient = client.getInputStream();
+                    OutputStream streamToClient = client.getOutputStream();
 
-                // Get server streams.
-                InputStream streamFromServer= server.getInputStream();
-                OutputStream streamToServer = server.getOutputStream();
+                    // Make a connection to the real server.
+                    // If we cannot connect to the server, send
+                    // an error to the client, disconnect, and
+                    // continue waiting for connections.
+                    try {
+                        server = new Socket(host, remotePort);
+                    } catch (IOException e) {
+                        PrintWriter out = new PrintWriter(streamToClient);
+                        out.println("Proxy server cannot connect to " + host + ":" + remotePort + "");
+                        out.flush();
+                        client.close();
+                        continue;
+                    }
 
-                // a thread to read the client's requests
-                // and pass them to the server. A separate
-                // thread for asynchronous.
-                Thread t = new Thread() {
-                    public void run() {
-                        int bytesRead;
-                        try {
-                            while ((bytesRead = streamFromClient.read(request)) != -1) {
-                                streamToServer.write(request, 0, bytesRead);
-                                streamToServer.flush();
-                            }
-                        } catch (IOException e) {
-                            // ignore
+                    // Get server streams.
+                    InputStream streamFromServer= server.getInputStream();
+                    OutputStream streamToServer = server.getOutputStream();
+
+                    // client to server request thread
+                    clientToserverRequestThread(streamFromClient, streamToServer);
+                        
+                    // Read the server's responses
+                    // and pass them back to the client.
+                    int bytesRead;
+                    try {
+                        while ((bytesRead = streamFromServer.read(reply)) != -1) {
+                            streamToClient.write(reply, 0, bytesRead);
+                            streamToClient.flush();
                         }
-
-                        // the client closed the connection
-                        // to us, so close our connection to
-                        // the server.
-                        try {
-                            streamToServer.close();
-                        } catch (IOException e) {}
-                        try {
-                            streamFromClient.close();
-                        } catch (IOException e) {}
+                    } catch (IOException e) {
                     }
-                };
 
-                // Start the client-to-server request thread
-                // running
-                t.start();
-
-                // Read the server's responses
-                // and pass them back to the client.
-                int bytesRead;
-                try {
-                    while ((bytesRead = streamFromServer.read(reply)) != -1) {
-                        streamToClient.write(reply, 0, bytesRead);
-                        streamToClient.flush();
+                    // The server closed its connection to us,
+                    // so we close our connection to our client.
+                    streamToClient.close();
+                    serverSocket.close();
+                } catch (IOException e) {
+                    System.err.println(e);
+                } finally {
+                    try {
+                        if (server != null) server.close();
+                        if (client != null) client.close();
+                        // serverSocket.close(); // Do not close the server socket here; it should stay open to accept new connections.
+                    } catch (IOException e) {
+                        
                     }
-                } catch (IOException e) {
-                }
-
-                // The server closed its connection to us,
-                // so we close our connection to our client.
-                streamToClient.close();
-
-            } catch (IOException e) {
-                System.err.println(e);
-            } finally {
-                try {
-                    if (server != null) server.close();
-                    if (client != null) client.close();
-                    // serverSocket.close(); // Do not close the server socket here; it should stay open to accept new connections.
-                } catch (IOException e) {
-                    
                 }
             }
         }

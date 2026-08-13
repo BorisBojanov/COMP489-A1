@@ -134,14 +134,14 @@ public class SimpleWebServer {
         String[] parts = requestLine.split("\\s+");
         String method = (parts.length > 0) ? parts[0] : "";
         String path = (parts.length > 1) ? parts[1] : "/";
-
-        // TODO (assignment):
-        //   * reject anything that is not GET with 400 Bad Request
-        //   * translate 'path' to a file under a document root
-        //   * if the file exists: send "HTTP/1.0 200 OK", a Content-Type header,
-        //     a blank line, then the file BYTES (read with a FileInputStream and
-        //     write to rawOut so images survive)
-        //   * if not: send "HTTP/1.0 404 Not Found" + a short message
+        /* TODO (assignment):
+        * reject anything that is not GET with 400 Bad Request
+        * translate 'path' to a file under a document root
+        * if the file exists: send "HTTP/1.0 200 OK", a Content-Type header,
+        * a blank line, then the file BYTES (read with a FileInputStream and
+        * write to rawOut so images survive)
+        * if not: send "HTTP/1.0 404 Not Found" + a short message
+        */
         // 1. Reject anything that is not GET with 400 Bad Request
         if (!method.equals("GET")) {
             sendBadRequest(rawOut, "Method '" + method + "' not supported. Only GET is allowed.");
@@ -156,10 +156,11 @@ public class SimpleWebServer {
         // 3.URL-decode
         // %20 → space. URLDecoder.decode(path, StandardCharsets.UTF_8).
         /*
-        Two things to know: it also converts + to a space, 
+        Two Notes: it also converts '+' to a space, 
             which is correct for query strings but technically wrong for path segments — fine for this assignment, but be aware. 
-        More importantly, you must decode before the security check, 
-            because %2e%2e%2f decodes to ../. An attacker who can skip your check by encoding it has beaten you.
+        Critical, it must decode before the security check, 
+            %2e%2e%2f decodes to ../. 
+            An attacker who can skip the check by encoding it has beaten the security measures.
         */
         try {
             path = java.net.URLDecoder.decode(path, StandardCharsets.UTF_8);

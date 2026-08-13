@@ -35,7 +35,7 @@ public class SimpleClient {
     public static void main(String[] args) {
         // For early testing, default to a real server; later use your proxy host/port.
         String host = (args.length > 0) ? args[0] : "localhost";
-        int port = (args.length > 1) ? Integer.parseInt(args[1]) : 9806;
+        int port = (args.length > 1) ? Integer.parseInt(args[1]) : 8888;
 
         try (BufferedReader console = new BufferedReader(new InputStreamReader(System.in))) {
             System.out.print("Enter resource path to request (e.g. /index.html): ");

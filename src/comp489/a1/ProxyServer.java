@@ -5,135 +5,142 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
-/**
- * https://www.geeksforgeeks.org/java/setting-up-proxy-connection-to-a-system-in-java/
- * 
+/*
  * ============================================================================
- * ASSIGNMENT 1 - STARTER SCAFFOLD (proxy server)   ***implement the TODOs***
- * ----------------------------------------------------------------------------
- * Do NOT post completed assignment code to the Unit 4 Discussion.
+ *  Program : ProxyServer
+ *  Course  : COMP 489 - Assignment 1
+ *  Description:
+ *      An HTTP proxy. It listens for a client on one socket, works out which
+ *      web server the client is really trying to reach, opens a second socket
+ *      to that server, forwards the request, and relays the reply back:
+ *
+ *          Client  <-->  [ ProxyServer ]  <-->  Web Server
+ *
+ *      Each accepted client is handled on its own thread. Within a client,
+ *      the two directions of the relay (client->server and server->client)
+ *      each run on their own thread so data can flow both ways at once.
+ *
+ *  Inputs  : args[0] = listen port (optional, default 8888)
+ *  Outputs : relays bytes between client and target; logs to stdout
  * ============================================================================
- *
- * The proxy is the core piece: a special HTTP server holding TWO socket
- * connections. It listens for the CLIENT on one socket and forwards the request
- * to the target WEB SERVER on the other, then relays the response back:
- *
- *      Client  <-->  [ Proxy ]  <-->  Web Server
- *
- * Because it must send and receive at the same time, each direction of the
- * relay is pumped on its own THREAD (see the relay() helper and the pump
- * Runnable below). This scaffold sets up the accept loop and the two-way pump
- * skeleton; you implement how the target host/port is chosen and any request
- * rewriting your assignment requires.
- * 
- * 
- * TODO: 1. Read the request line + headers from the client (line by line).
- * TODO: 2. Determine the target: from the Host: header, or from an absolute URI in the request line (GET http://host/path).
- * TODO: 3. Open new Socket(targetHost, targetPort).
- * TODO: 4. Write the request bytes you already read to the target first.
- * TODO: 5. Then start your existing two-thread relay to pump the rest and stream the response back.
  */
 public class ProxyServer {
 
+    private static final int DEFAULT_LISTEN_PORT = 8888;
+
+    /*
+     * main -- entry point. Opens the listening socket and accepts clients
+     *         forever, handing each one to its own thread.
+     * called by : the JVM
+     * calls     : serviceClient
+     */
     public static void main(String[] args) {
-        String host = "myProxyServer";
-        int remotePort = 9806;  // the port of the target web server (e.g., SimpleWebServer)
-        int localPort = 8888;   // the port on which this proxy listens for client connections
-        
-        int listenPort = (args.length > 0) ? Integer.parseInt(args[0]) : localPort;
+        int listenPort = (args.length > 0) ? Integer.parseInt(args[0]) : DEFAULT_LISTEN_PORT;
 
         try (ServerSocket listen = new ServerSocket(listenPort)) {
             System.out.println("ProxyServer listening on port " + listenPort + " ... (Ctrl+C to stop)");
-            
-            runServer(host, remotePort, localPort); // never returns
-            
+            while (true) {
+                Socket client = listen.accept();
+                // one thread per client so the proxy stays responsive
+                new Thread(() -> serviceClient(client)).start();
+            }
         } catch (IOException e) {
             System.out.println("Proxy could not listen on port " + listenPort + ": " + e.getMessage());
         }
     }
 
+    /*
+     * serviceClient -- handle a single client connection end to end.
+     * called by : main (on a worker thread)
+     * calls     : readRequestHead, parseTargetHost, parseTargetPort, relay
+     */
     private static void serviceClient(Socket client) {
-        // TODO (assignment):
-        //   1. read the client's request and determine the TARGET host + port
-        //      (parse the requested URL, or an initial "CONNECT host:port" line).
-        //   2. open a socket to that target web server:
-        //          Socket target = new Socket(targetHost, targetPort);
-        //   3. relay both directions concurrently (client->target, target->client).
-        //
-        // The example below shows the two-way relay structure; wire it to your
-        // real 'target' socket once you have parsed the destination.
+        try (client) {
+            // 1. Read the request line + headers from the client.
+            //    Keep the exact text so we can forward it to the target.
+            String requestHead = readRequestHead(client.getInputStream());
+            if (requestHead == null || requestHead.isEmpty()) {
+                return; // client sent nothing usable
+            }
+            System.out.println("--- REQUEST HEAD ---\n" + requestHead);
 
-        
-        String targetHost = "example.com";   
-        int targetPort = 80;
-        
-        // determine the TARGET host + port
-        targetHost = getTargetHost(client);
-        targetPort = getTargetPort(client);
+            // 2. Work out where the client actually wants to go.
+            String targetHost = parseTargetHost(requestHead);
+            int targetPort = parseTargetPort(requestHead);
+            if (targetHost == null) {
+                return; // could not determine a destination
+            }
+            System.out.println("Target: " + targetHost + ":" + targetPort);
 
-        // Open a socket to the target web server and relay both directions concurrently.
-        try (client;
-            
-            Socket target = new Socket(targetHost, targetPort)) {
-            handleClient(client); // Read and print the request line + headers from the client
+            // 3. Connect to the real server and forward the request, then relay.
+            try (Socket target = new Socket(targetHost, targetPort)) {
 
-            // Pump client -> target on this thread's own worker...
-            Thread client2target = new Thread(() -> relay(safeIn(client), safeOut(target), "client->target"));
-            // ...and target -> client on another.
-            Thread target2client = new Thread(() -> relay(safeIn(target), safeOut(client), "target->client"));
+                // 4. Send the request text we already read to the target FIRST,
+                //    otherwise the server never sees the request line/headers.
+                OutputStream toTarget = target.getOutputStream();
+                // TODO: write requestHead's bytes to toTarget and flush.
 
-            client2target.start();
-            target2client.start();
-            client2target.join();
-            target2client.join();
+                // 5. Relay both directions concurrently.
+                Thread c2t = new Thread(() -> relay(safeIn(client), safeOut(target), "client->target"));
+                Thread t2c = new Thread(() -> relay(safeIn(target), safeOut(client), "target->client"));
+                c2t.start();
+                t2c.start();
+                c2t.join();
+                t2c.join();
+            }
         } catch (IOException | InterruptedException e) {
             System.out.println("Proxy relay ended: " + e.getMessage());
         }
     }
 
-    private static void handleClient(Socket clientSocket) throws IOException {
-        // Wrap the socket input stream in a BufferedReader
+    /*
+     * readRequestHead -- read the request line and all header lines (up to the
+     *                    blank line) and return them as one string.
+     * called by : serviceClient
+     * returns   : the request head text, or null if the client closed early
+     *
+     * TODO: read line by line until you hit an empty line (end of headers).
+     *       Rebuild each line WITH its "\r\n" so the text you forward is valid
+     *       HTTP. Do NOT read the body here.
+     */
+    private static String readRequestHead(InputStream clientIn) throws IOException {
         BufferedReader reader = new BufferedReader(
-            new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8)
-        );
-
-        // 1. Read the Request Line (First line of the HTTP Request)
-        String requestLine = reader.readLine();
-        if (requestLine == null) {
-            return; // Client closed connection prematurely
-        }
-        System.out.println("--- REQUEST LINE ---");
-        System.out.println(requestLine);
-
-        // 2. Read the Headers line by line
-        System.out.println("--- HEADERS ---");
-        String headerLine;
-        
-        // Loop until an empty line is encountered
-        while ((headerLine = reader.readLine()) != null && !headerLine.isEmpty()) {
-            System.out.println(headerLine);
-            
-            // Optional: Parse the header key-value pair
-            /*
-            int colonIndex = headerLine.indexOf(":");
-            if (colonIndex != -1) {
-                String headerName = headerLine.substring(0, colonIndex).trim();
-                String headerValue = headerLine.substring(colonIndex + 1).trim();
-            }
-            */
-        }
-        
-        System.out.println("--- END OF HEADERS ---");
-        
-        // Note: Do not close the reader here if you intend to read the request body next!
+                new InputStreamReader(clientIn, StandardCharsets.UTF_8));
+        StringBuilder head = new StringBuilder();
+        // TODO: loop reading lines; stop at the blank line that ends the headers.
+        return head.toString();
     }
 
-    /** Copy bytes from 'in' to 'out' until the source is exhausted. */
+    /*
+     * parseTargetHost -- pull the destination host out of the request head.
+     * called by : serviceClient
+     *
+     * TODO: get it from the absolute URI in the request line
+     *       ("GET http://HOST:PORT/path HTTP/1.0") or from the "Host:" header.
+     *       Return just the host name (no port), or null if none found.
+     */
+    private static String parseTargetHost(String requestHead) {
+        return null; // TODO
+    }
+
+    /*
+     * parseTargetPort -- pull the destination port out of the request head.
+     * called by : serviceClient
+     *
+     * TODO: if the host is given as "host:port" use that port; otherwise
+     *       default to 80.
+     */
+    private static int parseTargetPort(String requestHead) {
+        return 80; // TODO
+    }
+
+    /* ---- working helpers below: no changes needed ---- */
+
+    /* relay -- copy bytes from in to out until the source is exhausted. */
     private static void relay(InputStream in, OutputStream out, String label) {
         if (in == null || out == null) return;
         byte[] buffer = new byte[4096];
@@ -144,7 +151,7 @@ public class ProxyServer {
                 out.flush();
             }
         } catch (IOException e) {
-            // Connection closed by one side - normal end of relay.
+            // connection closed by one side - normal end of relay
         }
         System.out.println(label + " finished.");
     }
@@ -155,124 +162,5 @@ public class ProxyServer {
 
     private static OutputStream safeOut(Socket s) {
         try { return s.getOutputStream(); } catch (IOException e) { return null; }
-    }
-
-    // String targetHost , int targetPort
-    private static String getTargetHost(Socket client) {
-        // gets the target host from the client request
-        String hostname = client.getInetAddress().getHostName();
-        return hostname != null ? hostname : "localhost";
-    }
-    private static int getTargetPort(Socket client) {
-        // extracts the target port from the client request
-        int targetport = client.getPort();
-        return targetport != 0 ? targetport : 80; // default to port 80 if not specified
-    }
-
-    private static void clientToserverRequestThread (InputStream streamFromClient, OutputStream streamToServer) {
-        // a thread to read the client's requests
-        // and pass them to the server. A separate
-        // thread for asynchronous.
-        final byte[] request = new byte[1024];
-
-        Thread t = new Thread() {
-            public void run() {
-                int bytesRead;
-                try {
-                    while ((bytesRead = streamFromClient.read(request)) != -1) {
-                        streamToServer.write(request, 0, bytesRead);
-                        streamToServer.flush();
-                    }
-                } catch (IOException e) {
-                    // ignore
-                }
-
-                // the client closed the connection
-                // to us, so close our connection to
-                // the server.
-                try {
-                    streamToServer.close();
-                } catch (IOException e) {}
-                try {
-                    streamFromClient.close();
-                } catch (IOException e) {}
-            }
-        };
-        // Start the client-to-server request thread
-        // running
-        t.start();
-
-    }
-    
-    private static void runServer (String host, int remotePort, int localPort) throws IOException {
-        // Create a ServerSocket to listen for connections
-        ServerSocket serverSocket = new ServerSocket(localPort);
-
-        
-        // final byte[] request = new byte[1024];
-        byte[] reply = new byte[4096];
-        
-        {   
-            while (true) {
-                Socket client = null;
-                Socket server = null;
-                
-                try {
-                    // Wait for a connection on the local port
-                    client = serverSocket.accept();
-                    System.out.println("Accepted connection from " + client.getInetAddress() + ":" + client.getPort());
-                    serviceClient(client);
-                    InputStream streamFromClient = client.getInputStream();
-                    OutputStream streamToClient = client.getOutputStream();
-
-                    // Make a connection to the real server.
-                    // If we cannot connect to the server, send
-                    // an error to the client, disconnect, and
-                    // continue waiting for connections.
-                    try {
-                        server = new Socket(host, remotePort);
-                    } catch (IOException e) {
-                        PrintWriter out = new PrintWriter(streamToClient);
-                        out.println("Proxy server cannot connect to " + host + ":" + remotePort + "");
-                        out.flush();
-                        client.close();
-                        continue;
-                    }
-
-                    // Get server streams.
-                    InputStream streamFromServer= server.getInputStream();
-                    OutputStream streamToServer = server.getOutputStream();
-
-                    // client to server request thread
-                    clientToserverRequestThread(streamFromClient, streamToServer);
-                        
-                    // Read the server's responses
-                    // and pass them back to the client.
-                    int bytesRead;
-                    try {
-                        while ((bytesRead = streamFromServer.read(reply)) != -1) {
-                            streamToClient.write(reply, 0, bytesRead);
-                            streamToClient.flush();
-                        }
-                    } catch (IOException e) {
-                    }
-
-                    // The server closed its connection to us,
-                    // so we close our connection to our client.
-                    streamToClient.close();
-                    serverSocket.close();
-                } catch (IOException e) {
-                    System.err.println(e);
-                } finally {
-                    try {
-                        if (server != null) server.close();
-                        if (client != null) client.close();
-                        // serverSocket.close(); // Do not close the server socket here; it should stay open to accept new connections.
-                    } catch (IOException e) {
-                        
-                    }
-                }
-            }
-        }
     }
 }

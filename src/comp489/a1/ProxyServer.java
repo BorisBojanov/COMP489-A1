@@ -9,6 +9,9 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+
 /*
  * ============================================================================
  *  Program : ProxyServer
@@ -43,6 +46,10 @@ public class ProxyServer {
 
         try (ServerSocket listen = new ServerSocket(listenPort)) {
             System.out.println("ProxyServer listening on port " + listenPort + " ... (Ctrl+C to stop)");
+            String lol = "GET http://example.com HTTP/1.1";
+            String test = parseTargetHost(lol);
+            System.out.println(lol);
+            System.out.println(test);
             while (true) {
                 Socket client = listen.accept();
                 // one thread per client so the proxy stays responsive
@@ -82,7 +89,10 @@ public class ProxyServer {
                 // 4. Send the request text we already read to the target FIRST,
                 //    otherwise the server never sees the request line/headers.
                 OutputStream toTarget = target.getOutputStream();
-                // TODO: write requestHead's bytes to toTarget and flush.
+                // write requestHead's bytes to toTarget and flush.
+                byte[] bytes = requestHead.getBytes(StandardCharsets.UTF_8);
+                toTarget.write(bytes);
+                toTarget.flush();
 
                 // 5. Relay both directions concurrently.
                 Thread c2t = new Thread(() -> relay(safeIn(client), safeOut(target), "client->target"));
@@ -103,7 +113,7 @@ public class ProxyServer {
      * called by : serviceClient
      * returns   : the request head text, or null if the client closed early
      *
-     * TODO: read line by line until you hit an empty line (end of headers).
+     *  read line by line until you hit an empty line (end of headers).
      *       Rebuild each line WITH its "\r\n" so the text you forward is valid
      *       HTTP. Do NOT read the body here.
      */
@@ -111,7 +121,15 @@ public class ProxyServer {
         BufferedReader reader = new BufferedReader(
                 new InputStreamReader(clientIn, StandardCharsets.UTF_8));
         StringBuilder head = new StringBuilder();
-        // TODO: loop reading lines; stop at the blank line that ends the headers.
+        // loop reading lines; stop at the blank line that ends the headers.
+        String line = reader.readLine();
+        while (line != null) {
+            // check for empty line
+            if (line.isEmpty()) {head.append("\r\n"); break;}
+            
+            // line is not empty so we append it
+            head.append(line).append("\r\n"); // each line ends with \r\n
+        }
         return head.toString();
     }
 
@@ -119,23 +137,40 @@ public class ProxyServer {
      * parseTargetHost -- pull the destination host out of the request head.
      * called by : serviceClient
      *
-     * TODO: get it from the absolute URI in the request line
+     * get host name from the absolute URI in the request line
      *       ("GET http://HOST:PORT/path HTTP/1.0") or from the "Host:" header.
      *       Return just the host name (no port), or null if none found.
      */
     private static String parseTargetHost(String requestHead) {
-        return null; // TODO
+        String[] parts = requestHead.split(" "); // [GET, http://HOST:PORT/path, HTTP/1.0]
+        String host = parts[1];
+        try {
+            URI uri = new URI(host);
+            String h = uri.getHost();
+            return h;
+        } catch (URISyntaxException e) {
+            return null;
+        }
     }
 
     /*
      * parseTargetPort -- pull the destination port out of the request head.
      * called by : serviceClient
-     *
-     * TODO: if the host is given as "host:port" use that port; otherwise
+     *      "GET http://HOST:PORT/path HTTP/1.0"
+     * if the host is given as "host:port" use that port; otherwise
      *       default to 80.
      */
     private static int parseTargetPort(String requestHead) {
-        return 80; // TODO
+        String[] parts = requestHead.split(" ");    // [GET, http://HOST:PORT/path, HTTP/1.0]
+        String port = parts[1];
+        try {
+            URI uri = new URI(port);
+            int p = uri.getPort();
+            if (p == -1) {return 80;}
+            return p;
+        } catch (URISyntaxException e) {
+            return 80;
+        }
     }
 
     /* ---- working helpers below: no changes needed ---- */

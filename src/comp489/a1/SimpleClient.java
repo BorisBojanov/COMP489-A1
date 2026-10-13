@@ -129,6 +129,7 @@ public class SimpleClient {
 
                 // 1. Send requst
                 sendInitialRequest(out, resource, host);
+                
                 // 2. Parse Headers Line-by-Line using a custom line reader or safe wrapper
                 // We parse manually from the stream or use a scanner to avoid over-consuming binary data.
                 int contentLength = 0;

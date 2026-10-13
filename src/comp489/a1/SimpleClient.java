@@ -2,17 +2,17 @@ package comp489.a1;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+// import java.io.ByteArrayInputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.io.ByteArrayOutputStream;
+
 
 /**
- * ============================================================================
- * ASSIGNMENT 1 - STARTER SCAFFOLD (client)   ***implement the TODOs yourself***
- * ----------------------------------------------------------------------------
- * Do NOT post completed assignment code to the Unit 4 Discussion. This file is
- * only a starting structure to help you begin; the graded logic is yours.
- * ============================================================================
+ * Simple HTTP client that communicates with a proxy server.
+ * ASSIGNMENT 1 
  *
  * Architecture:   Client  <->  Proxy  <->  Web Server
  *
@@ -29,44 +29,190 @@ import java.net.Socket;
  * need to read the response body from the raw InputStream by byte count 
  * (using the Content-Length you parse from the headers) 
  * rather than readLine
+ * 
+ * Example HTTP request:
+ *   GET /index.html HTTP/1.0
+ *   Host: localhost
+ *
+ * Example HTTP response:
+ *   HTTP/1.0 200 OK
+ *   Content-Length: 1234
+ *
+ *   <body of the response>
+ * 
+ * Example HTTP/1.1 request:
+ *   GET /index.html HTTP/1.1
+ *   Host: www.example.com
+ *   User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)
+ *   Accept: text/html,application/xhtml+xml
+ *   Accept-Language: en-US,en;q=0.9
+ *   Connection: keep-alive
+ * 
+ * Example of an HTTP POST request:
+ *   POST /upload/file HTTP/1.1
+ *   Host: api.example.com
+ *   Content-Type: application/pdf
+ *   Content-Length: 1048576
+ *
+ *   [RAW BINARY BYTES OF THE PDF FILE]
+ * 
+ * 
+ * Tidy-up before submit:
+    response.contentLength is never set.
+    myHttpResponse is an inner class, which is why you write new SimpleClient().new myHttpResponse(). 
+        Ask yourself whether it needs to belong to an instance. A static nested class (or its own file) would be cleaner.
  */
 public class SimpleClient {
-
+    public class myHttpResponse {
+        public myHttpResponse() {
+            this.contentLength = 0;
+            this.contentType = "";
+            this.body = new byte[0];
+        }
+        public int contentLength;
+        public String contentType;
+        public byte[] body;
+    }
     public static void main(String[] args) {
         // For early testing, default to a real server; later use your proxy host/port.
         String host = (args.length > 0) ? args[0] : "localhost";
         int port = (args.length > 1) ? Integer.parseInt(args[1]) : 8888;
 
         try (BufferedReader console = new BufferedReader(new InputStreamReader(System.in))) {
-            System.out.print("Enter resource path to request (e.g. /index.html): ");
+            System.out.print("Enter resource URL to request (e.g. http://example.com/page.html): ");
             String resource = console.readLine();
             if (resource == null || resource.isBlank()) {
                 resource = "/";
             }
+            myHttpResponse response = new SimpleClient().new myHttpResponse();
 
+
+            // Notice: Do NOT wrap the InputStream in a BufferedReader entirely if you want raw access.
+            // Instead, read from the raw InputStream, or wrap a temporary reader just for headers.
             try (Socket socket = new Socket(host, port);
-                 PrintWriter out = new PrintWriter(socket.getOutputStream(), false);
-                 BufferedReader in = new BufferedReader(
-                         new InputStreamReader(socket.getInputStream()))) {
+                PrintWriter out = new PrintWriter(socket.getOutputStream(), false);
+                InputStream rawIn = socket.getInputStream(); // Keeps the raw stream available
+            ){
 
-                // --- send a minimal HTTP/1.0 request line ---
-                // TODO: build the request line your proxy/server expects.
-                out.print("GET " + resource + " HTTP/1.0\r\n");
-                out.print("Host: " + host + "\r\n");
-                out.print("\r\n");     // blank line ends the request headers
-                out.flush();           // IMPORTANT: flush or nothing is sent
-
-                // --- read and print the whole response ---
-                // TODO: for binary resources (images) read bytes, not lines.
-                String line;
-                while ((line = in.readLine()) != null) {
-                    System.out.println(line);
+                // 1. Send requst
+                sendInitialRequest(out, resource, host);
+                // 2. Parse Headers Line-by-Line using a custom line reader or safe wrapper
+                // We parse manually from the stream or use a scanner to avoid over-consuming binary data.
+                int contentLength = 0;
+                contentLength = parseHeader(rawIn, response);
+                response.contentLength = contentLength;
+                if (contentLength <= 0) contentLength = 0;
+                
+                System.out.println("Headers read successfully.");
+                
+                // 3. Read the Body using the Content-Length count
+                if (contentLength > 0) {
+                    if (response.contentType != null) { System.out.println("Content-Type: " + response.contentType); }
+                    System.out.println("--- BODY (Reading " + contentLength + " bytes) ---");
+                    parseBody(contentLength, rawIn, response);
                 }
+
+            } catch ( IOException | NumberFormatException e){ 
+                System.out.println("Socket socket\nPrintWriter out\nInputStream rawIn\nFailed to connect Error: " + e.getMessage() +  "\n For host:" + host + " \n At port: " + port);
             }
+
         } catch (IOException e) {
-            System.out.println("Client error: " + e.getMessage()
+            System.out.println("BufferedReader console: \n\tClient error: " + e.getMessage()
                     + "  (is the server/proxy running on " + host + ":" + port + "?)");
         }
     }
+
+    private static String readLineBytes(InputStream in)  throws java.io.IOException {
+        /*
+        Issue- When you call rawIn.read(), those bytes will be missing.
+            
+        BufferedReader automatically reads a large chunk of data (often 8KB) from the underlying socket stream into an internal memory buffer. 
+            If the headers are small and the image data comes right after them, headerReader.readLine() 
+            will accidentally read part of the binary image bytes (during chunking) into its buffer. 
+            
+        
+        Fix- this helper method reads byte-by-byte from rawIn until it hits \r\n to parse headers. 
+            That leaves the stream pointer perfectly positioned at the first byte of the binary body.
+        */
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        int i;
+
+        while ((i = in.read())!= -1){
+            buffer.write(i);
+            // Look for the "Line Feed" character (\n) which ends an HTTP header line
+            if (i == '\n') break;
+        }
+        // If stream ended and we read nothing, return null (End of Stream)
+        if (buffer.size() == 0 ) return null;
+        
+        // Convert bytes to string and trim the trailing \r\n characters
+
+        // return buffer.toString(java.nio.charset.StandardCharsets.US_ASCII);
+        String out = buffer.toString(java.nio.charset.StandardCharsets.US_ASCII).replaceAll("\r?\n$", "");
+        return out;
+
+    }
+
+    // Parses the HTTP header and puts into HttpResponse object relevant information into the response
+    private static int parseHeader(InputStream headerIn, myHttpResponse response) throws IOException {
+        // Headers are safe to read line-by-line using readLine()
+        // Strip the network newline codes for clean string comparison/printing
+        String line;
+        
+        int contentLength = 0;
+        
+        // Loop through each header line 
+        //      until we reach the blank line separating headers from the body
+        while ((line = readLineBytes(headerIn)) != null && !line.isBlank()) {
+
+            String cleanLine = line.replace("\r", "").replace("\n", "");
+            System.out.println(cleanLine);
+
+            // Check for Content-Length (case-insensitive)
+            if (cleanLine.toLowerCase().startsWith("content-length:")) {
+                contentLength = Integer.parseInt(cleanLine.split(":")[1].trim());
+            }
+            if (cleanLine.toLowerCase().startsWith("content-type:")) {
+                // Store the content type
+                String contType = cleanLine.split(":")[1].trim();
+                response.contentType = contType;
+            }
+        }
+        return contentLength;
+    }
+
+    // Parses the HTTP body and stores it into the HttpResponse object
+    private static void parseBody(int contentLength, InputStream rawIn, myHttpResponse response) throws IOException {
+        // For binary resources, read bytes directly from the input stream
+        byte[] bodyBuffer = new byte[contentLength];
+        int totalBytesRead = 0;
+
+        while (totalBytesRead < contentLength) {
+            // Read directly from the stream into our byte array offset
+            int bytesRead = rawIn.read(bodyBuffer, totalBytesRead, contentLength - totalBytesRead);
+            if (bytesRead == -1) {
+                System.out.println("Warning: Server closed connection before sending full payload.");
+                System.out.println("Total bytes read: " + totalBytesRead + " out of " + contentLength);
+                break; // Stream ended early
+            }
+            totalBytesRead += bytesRead;
+        }
+        
+        // // Debug http text bodies to screen:
+        // System.out.write(bodyBuffer, 0, totalBytesRead);
+        // System.out.flush(); 
+        // Files.write(filePath, bodyBuffer); // If it's an image, write bodyBuffer out to a local file instead of console!
+
+        response.body = bodyBuffer;
+    }
+
+    private static void sendInitialRequest(PrintWriter out, String resource, String host) {
+        out.print("GET " + resource + " HTTP/1.0\r\n");
+        out.print("Host: " + host + "\r\n");
+        out.print("\r\n");     // blank line ends the request headers
+        out.flush();           // IMPORTANT: flush or nothing is sent
+    }
+
+
 }
    

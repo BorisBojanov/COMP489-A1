@@ -11,10 +11,13 @@ import java.io.ByteArrayOutputStream;
 
 
 /**
+ * Program: SimpleClient
+ * Course  : COMP 489 - Assignment 1
+ * 
+ * Description:
  * Simple HTTP client that communicates with a proxy server.
- * ASSIGNMENT 1 
  *
- * Architecture:   Client  <->  Proxy  <->  Web Server
+ * Architecture:   Client  <->  Proxy
  *
  * The client:
  *   1. asks the user for a resource URL,

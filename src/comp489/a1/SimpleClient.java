@@ -57,6 +57,32 @@ import java.io.ByteArrayOutputStream;
  *   [RAW BINARY BYTES OF THE PDF FILE]
  * 
  * 
+ * TODO 2. The user is supposed to type a URL, not a path. The assignment says the client lets the user “input the resource URL.” 
+ *  Right now you ask for /index.html and send Host: localhost, which is the proxy’s own name. 
+ *      Look at what the proxy receives.
+ *          Last time I asked what the proxy has to extract from GET http://example.com/page.html HTTP/1.0. 
+ *          Which of those pieces does your client currently have no way to send?
+ * 
+ * TODO Issue: What happens when there is no Content-Length? 
+ *  body only gets read when contentLength > 0. Predict what the client prints for a 404 page, 
+ *  for https://www.google.com (assignment test), and for any server that doesn’t send that header. 
+ *  Then think about how an HTTP/1.0 client knows the body has ended when no length is given. 
+ *      JNP Ch 6 (pp169–175) talks about this.
+ * 
+ * 
+ * A valid HTTP request with a body of size 0 requires a Content-Length: 
+ *  0 header to explicitly state that no data is being sent in the body. 
+ *  This is most commonly used with POST, PUT, or PATCH methods when triggering an action that doesn't require extra payload parameters.
+ *  Example:
+ *  POST /api/v1/users/42/activate HTTP/1.1
+ *      Host: example.com
+ *      Authorization: Bearer mock_token_12345
+ *      Content-Length: 0
+ * 
+ * TODO What if the server never answers? You open a Socket with no timeout. 
+ *  What does the user see if the proxy accepts the connection and then goes silent? (JavaNetProgr Ch 8 covers SO_TIMEOUT, p261.)
+
+
  * Tidy-up before submit:
     response.contentLength is never set.
     myHttpResponse is an inner class, which is why you write new SimpleClient().new myHttpResponse(). 
@@ -69,6 +95,10 @@ public class SimpleClient {
             this.contentType = "";
             this.body = new byte[0];
         }
+        public String uri;      // Identifies a resource by name, location, or both. Just names the resource, doesn't tell you were to find it.
+                                // "/index.html" or the full resource URL as input by the user
+        public String url;      // URL of the resource, may be relative or absolute.
+        public String urlfull;  // Full URL of the resource, including scheme, host, and path.
         public int contentLength;
         public String contentType;
         public byte[] body;

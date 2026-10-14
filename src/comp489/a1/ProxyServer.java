@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
@@ -81,7 +82,7 @@ Per the Notion requirements, each function header needs: name, description, inpu
  */
 public class ProxyServer {
     private static final int DEFAULT_LISTEN_PORT = 8888;
-    private static final List<String> PROXY_HOSTNAMES = Arrays.asList("myproxyAssignment.com", "localhost", "127.0.0.1", "google.com", "BorisFileTransferProtocol.com");
+    private static final List<String> PROXY_HOSTNAMES = Arrays.asList("borisbojanovhomelab.com", "localhost", "127.0.0.1", "www.google.com", "BorisFileTransferProtocol.com");
     /*
      * main -- entry point. Opens the listening socket and accepts clients
      *         forever, handing each one to its own thread.
@@ -125,16 +126,16 @@ public class ProxyServer {
         //   1. read the client's request and determine the TARGET host + port
         //      (parse the requested URL, or an initial "CONNECT host:port" line).
         // Need to go from Socket client -> targetHost:targetPort via the proxy
-        String targetHost = "example.com";      // derived from the client request
-        int targetPort = 80;                    // derived from the client request
-        InputStream rawIn = client.getInputStream(); // Keeps the raw stream available
-        MyHttp response = new MyHttp();
-        response.setHttp(client); // This initializes the HTTP object with the  
+        String targetHost = "";      // derived from the client request
+        int targetPort = -1;                    // derived from the client request
+        // InputStream rawIn = client.getInputStream(); // Keeps the raw stream available
+        MyHttp request = new MyHttp();
+        request.setHttp(client); // This initializes the HTTP object with the client's request
 
         // targetHost = client.getLocalAddress().getHostName();
         // targetPort = client.getPort();
-        targetHost = response.host;
-        targetPort = response.port;
+        targetHost = request.host;
+        targetPort = request.port;
         
 
         // parsed the destination
@@ -153,9 +154,20 @@ public class ProxyServer {
             ) {
                     
                 //   3. relay both directions concurrently (client->target, target->client).
+                // The head must be sent first, before any body content.
+                String requestToServer = createRequestHead(request);
+                OutputStream toTarget = target.getOutputStream();
+                toTarget.write(requestToServer.getBytes());
+                // toTarget.write(requestToServer.getBytes(StandardCharsets.US_ASCII));
+                
+                // Then send the body if it exits
+                if (request.body != null && request.body.length > 0) {
+                    toTarget.write(request.body);
+                }
+                toTarget.flush();
 
-                String requestToServer = createRequestHead(response);
-                // The two-way relay structure; wire the client socket to the server's real 'target' socket once we have parsed the destination.
+
+                // The two-way relay: Where the client socket is connected to the server's real 'target' socket once we have parsed the destination.
                 // Use client -> target on this thread's own worker...
                 Thread c2t = new Thread(() -> relay(safeIn(client), safeOut(target), "client->target"));
                 // ...and target -> client on another.
@@ -170,6 +182,8 @@ public class ProxyServer {
             }
         } else {
             System.out.println("Access denied to host: " + targetHost);
+            // Close the client socket, so denied hosts don't hang the client
+            client.close();
             return;
         }
 
@@ -192,139 +206,10 @@ public class ProxyServer {
             requestHead.append(header).append("\r\n");
         }
         
-        // Finish off with a blank line
-        requestHead.append("\r\n");
+        // Finish off with a blank line. Must be "\r\n\r\n"
+        requestHead.append("\r\n\r\n");
         return requestHead.toString();
     }
-
-    // private static void OLDserviceClient(Socket client) {
-    //     try (client) {
-    //         //   1. read the client's request and determine the TARGET host + port
-    //         //      The two-way relay structure; wire the real 'target' socket once we have parsed the destination.
-    //         //      (parse the requested URL, or an initial "CONNECT host:port" line).
-    //         //   2. open a socket to that target web server:
-    //         //          Socket target = new Socket(targetHost, targetPort);
-    //         //   3. relay both directions concurrently (client->target, target->client).
-    //         //
-    //         // 1. Read the client request line + headers from the client.
-    //         //    Keep the exact text so we can forward it to the target.
-    //         String requestHead = readRequestHead(client.getInputStream());
-    //         if (requestHead == null || requestHead.isEmpty()) {
-    //             return; // client sent nothing usable
-    //         }
-    //         System.out.println("--- REQUEST HEAD ---\n" + requestHead);
-
-    //         // 2. Work out where the client actually wants to go.
-    //         String targetHost = parseTargetHost(requestHead);
-    //         int targetPort = parseTargetPort(requestHead);
-    //         if (targetHost == null) {
-    //             return; // could not determine a destination
-    //         }
-    //         System.out.println("Target: " + targetHost + ":" + targetPort);
-
-    //         // 3. Connect to the real server and forward the request, then relay.
-    //         try (Socket target = new Socket(targetHost, targetPort)) {
-
-    //             // 4. Send the request text we already read to the target FIRST,
-    //             //    otherwise the server never sees the request line/headers.
-    //             OutputStream toTarget = target.getOutputStream();
-    //             // write requestHead's bytes to toTarget and flush.
-    //             byte[] bytes = requestHead.getBytes(StandardCharsets.UTF_8);
-    //             toTarget.write(bytes);
-    //             toTarget.flush();
-
-    //             // 5. Relay both directions concurrently.
-    //             Thread c2t = new Thread(() -> relay(safeIn(client), safeOut(target), "client->target"));
-    //             Thread t2c = new Thread(() -> relay(safeIn(target), safeOut(client), "target->client"));
-    //             c2t.start();
-    //             t2c.start();
-    //             c2t.join();
-    //             t2c.join();
-    //         }
-    //     } catch (IOException | InterruptedException e) {
-    //         System.out.println("Proxy relay ended: " + e.getMessage());
-    //     }
-    // }
-
-    // /*
-    //  * readRequestHead -- read the request line and all header lines (up to the
-    //  *                    blank line) and return them as one string.
-    //  * called by : serviceClient
-    //  * returns   : the request head text, or null if the client closed early
-    //  *
-    //  *  read line by line until you hit an empty line (end of headers).
-    //  *       Rebuild each line WITH its "\r\n" so the text you forward is valid
-    //  *       HTTP. Do NOT read the body here.
-    //  */
-    // private static String readRequestHead(InputStream clientIn) throws IOException {
-    //     BufferedReader reader = new BufferedReader( new InputStreamReader(clientIn, StandardCharsets.UTF_8));
-    //     StringBuilder head = new StringBuilder();
-    //     // loop reading lines; stop at the blank line that ends the headers.
-    //     String line = reader.readLine();
-    //     while (line != null) {
-    //         // check for empty line
-    //         if (line.isEmpty()) {head.append("\r\n"); break;}
-            
-    //         // line is not empty so we append it
-    //         head.append(line).append("\r\n"); // each line ends with \r\n
-    //     }
-    //     return head.toString();
-    // }
-
-    // /*
-    //  * parseTargetHost -- pull the destination host out of the request head.
-    //  * called by : serviceClient
-    //  *
-    //  * get host name from the absolute URI in the request line
-    //  *       ("GET http://HOST:PORT/path HTTP/1.0") or from the "Host:" header.
-    //  *       Return just the host name (no port), or null if none found.
-    //  */
-    // private static String parseTargetHost(String requestHead) {
-    //     String[] parts = requestHead.split(" "); // [GET, http://HOST:PORT/path, HTTP/1.0]
-    //     // Debug: print all parts of the request line for inspection
-    //     for (String part : parts) {
-    //         System.out.println("Parsing requestHead parts: ");
-    //         System.out.println(part);
-    //     }
-        
-    //     // Look for the "Host:" header in the request parts first.
-    //     for (String part : parts) {
-    //         if (part.toLowerCase().startsWith("host:")) {
-    //             String[] hostParts = part.split(":");
-    //             if (hostParts.length > 1) {
-    //                 return hostParts[1].trim();
-    //             }
-    //         }
-    //     }
-    //     String host = parts[1];
-    //     try {
-    //         URI uri = new URI(host);
-    //         String h = uri.getHost();
-    //         return h;
-    //     } catch (URISyntaxException e) {
-    //         return null;
-    //     }
-    // }
-
-    // /*
-    //  * parseTargetPort -- pull the destination port out of the request head.
-    //  * called by : serviceClient
-    //  *      "GET http://HOST:PORT/path HTTP/1.0"
-    //  * if the host is given as "host:port" use that port; otherwise
-    //  *       default to 80.
-    //  */
-    // private static int parseTargetPort(String requestHead) {
-    //     String[] parts = requestHead.split(" ");    // [GET, http://HOST:PORT/path, HTTP/1.0]
-    //     String port = parts[1];
-    //     try {
-    //         URI uri = new URI(port);
-    //         int p = uri.getPort();
-    //         if (p == -1) {return 80;}
-    //         return p;
-    //     } catch (URISyntaxException e) {
-    //         return 80;
-    //     }
-    // }
 
     /* ---- working helpers below: no changes needed ---- */
 

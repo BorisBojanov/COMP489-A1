@@ -83,19 +83,18 @@ SimpleWebServer expects:
     Fixed by adding the client socket to the try-with-resources statement.
 
 
-
-The file header still contains scaffold text (“This scaffold sets up...”, lines 29-33), and a “Do NOT post” note may have been left behind elsewhere. Rewrite it in your own words.
-The unused inner class myHttpResponse and the commented-out block at the end of main should go, or be used. Dead code reads as unfinished.
-Per the Notion requirements, each function header needs: name, description, inputs, outputs, “called by”, and “will call”. Yours have some of these, not all.
  */
 public class ProxyServer {
     private static final int DEFAULT_LISTEN_PORT = 8888;
     private static final List<String> PROXY_HOSTNAMES = Arrays.asList("borisbojanovhomelab.com", "localhost", "127.0.0.1", "www.google.com", "BorisFileTransferProtocol.com");
+
     /*
      * main -- entry point. Opens the listening socket and accepts clients
      *         forever, handing each one to its own thread.
+     * inputs    : args[0] = listen port (optional, default 8888)
+     * outputs   : none returned; prints status messages to stdout
      * called by : the JVM
-     * calls     : serviceClient
+     * will call : serviceClient (on a new thread per client)
      */
     public static void main(String[] args) {
         int listenPort = (args.length > 0) ? Integer.parseInt(args[0]) : DEFAULT_LISTEN_PORT;
@@ -110,10 +109,8 @@ public class ProxyServer {
                     try {
                         serviceClient(client);
                     } catch (IOException e) {
-                        // TODO Auto-generated catch block
                         e.printStackTrace();
                     } catch (InterruptedException e) {
-                        // TODO Auto-generated catch block
                         e.printStackTrace();
                     }
                 }).start();
@@ -125,10 +122,16 @@ public class ProxyServer {
 
 
     /*
-     * serviceClient -- handle a single client connection end to end.
+     * serviceClient -- handle a single client connection end to end: parse the
+     *   request, find the target host and port, check them against the allow-list,
+     *   forward the rewritten request, then relay bytes both ways (with half-close)
+     *   until the exchange ends.
+     * inputs    : client -- the accepted client socket
+     * outputs   : none returned; the client receives the target's response, or the
+     *             connection is closed if the target is invalid or not allowed
      * called by : main (on a worker thread)
-     * calls     : relay
-     * arguments : client socket
+     * will call : MyHttp (constructor), MyHttp.setHttp, createRequestHead,
+     *             relay (on two threads), safeIn, safeOut
      */
     private static void serviceClient(Socket client) throws IOException, InterruptedException{
         //   1. read the client's request and determine the TARGET host + port
@@ -210,9 +213,14 @@ public class ProxyServer {
     }
 
     /*
-     * Helper method to create the request head for forwarding to the target server. 
-     * It assembles the all bytes sent to the target. In order: the rewritten request line, then every stored header line each ending in \r\n, then the blank line.
-    */
+     * createRequestHead -- build the request head to forward to the target server:
+     *   the rewritten request line (path only, e.g. "GET /x.html HTTP/1.0"), every
+     *   stored header line, then the blank line.
+     * inputs    : request -- the parsed client request (method, uri, protocol, rawHeaderlines)
+     * outputs   : String -- the complete request head, each line ending in \r\n
+     * called by : serviceClient
+     * will call : nothing
+     */
     private static String createRequestHead (MyHttp request){
         StringBuilder requestHead = new StringBuilder();
         // Start with the request line
@@ -236,7 +244,16 @@ public class ProxyServer {
 
     /* ---- working helpers below: no changes needed ---- */
 
-    /* relay -- copy bytes from in to out until the source is exhausted. */
+    /*
+     * relay -- copy bytes from in to out until the source reaches end-of-stream or
+     *          the connection closes. One relay runs for each direction.
+     * inputs    : in    -- source stream
+     *             out   -- destination stream
+     *             label -- name printed when finished, e.g. "client->target"
+     * outputs   : none returned; bytes written to out; prints "<label> finished."
+     * called by : serviceClient (the c2t and t2c threads)
+     * will call : nothing
+     */
     private static void relay(InputStream in, OutputStream out, String label) {
         if (in == null || out == null) return;
         byte[] buffer = new byte[4096];
@@ -252,10 +269,24 @@ public class ProxyServer {
         System.out.println(label + " finished.");
     }
 
+    /*
+     * safeIn -- get a socket's input stream without throwing (for use inside lambdas).
+     * inputs    : s -- a connected socket
+     * outputs   : the socket's InputStream, or null if it cannot be opened
+     * called by : serviceClient
+     * will call : nothing
+     */
     private static InputStream safeIn(Socket s) {
         try { return s.getInputStream(); } catch (IOException e) { return null; }
     }
 
+    /*
+     * safeOut -- get a socket's output stream without throwing (for use inside lambdas).
+     * inputs    : s -- a connected socket
+     * outputs   : the socket's OutputStream, or null if it cannot be opened
+     * called by : serviceClient
+     * will call : nothing
+     */
     private static OutputStream safeOut(Socket s) {
         try { return s.getOutputStream(); } catch (IOException e) { return null; }
     }

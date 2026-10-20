@@ -94,6 +94,17 @@ public class SimpleClient {
     // Used when the user just presses Enter. SimpleWebServer listens on 9806 by default.
     private static final String DEFAULT_URL = "http://localhost:9806/";
 
+    /*
+     * main -- entry point. Reads a URL from the user, checks it is a full http(s)
+     *         URL, sends a GET for it through the proxy, then prints the response's
+     *         status line, headers and body.
+     * inputs    : args[0] = proxy host (optional, default localhost)
+     *             args[1] = proxy port (optional, default 8888)
+     *             console = resource URL typed by the user (blank = DEFAULT_URL)
+     * outputs   : none returned; prints the response, or an error / timeout message
+     * called by : the JVM
+     * will call : sendInitialRequest, MyHttp (constructor), MyHttp.setHttp
+     */
     public static void main(String[] args) {
         // For early testing, default to a real server; later use your proxy host/port.
         String host = (args.length > 0) ? args[0] : "localhost";
@@ -170,6 +181,17 @@ public class SimpleClient {
         }
     }
 
+    /*
+     * sendInitialRequest -- write an HTTP/1.0 GET request: the request line with the
+     *                       absolute URL, a Host: header, and the blank line that
+     *                       ends the request head.
+     * inputs    : out      -- writer on the socket connected to the proxy
+     *             resource -- the full URL, e.g. http://localhost:9806/index.html
+     *             host     -- target host[:port] for the Host: header (not the proxy)
+     * outputs   : none returned; request bytes are sent to the proxy (flushed)
+     * called by : main
+     * will call : nothing
+     */
     private static void sendInitialRequest(PrintWriter out, String resource, String host) {
         out.print("GET " + resource + " HTTP/1.0\r\n");
         out.print("Host: " + host + "\r\n");

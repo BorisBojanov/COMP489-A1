@@ -10,6 +10,14 @@ import java.util.List;
 import java.net.URISyntaxException;
 
 
+/*
+ *  Program : MyHttp
+ *  Course  : COMP 489 - Assignment 1
+ *  Description:
+ *      Parses one HTTP message (request or response) from a socket's raw byte
+ *      stream: start line, headers and body. SimpleClient uses it for responses;
+ *      ProxyServer uses it for requests and to find the target host, port and path.
+ */
 public class MyHttp {
     public String protocol;  // HTTP protocol version, e.g., "HTTP/1.1"
     public int statusCode;  // HTTP response status code, e.g., 200, 404
@@ -30,6 +38,14 @@ public class MyHttp {
     public List<String> rawHeaderlines = new ArrayList<>(); // cannot make this static because each instance has its own headers list
 
 
+    /*
+     * MyHttp -- constructor. Creates an empty message: no Content-Length (-1),
+     *           empty content type and empty body.
+     * inputs    : none
+     * outputs   : a new MyHttp object
+     * called by : SimpleClient.main, ProxyServer.serviceClient
+     * will call : nothing
+     */
     public MyHttp() {
         this.contentLength = -1;
         this.contentType = "";
@@ -37,6 +53,14 @@ public class MyHttp {
     }
 
 
+    /*
+     * readLineBytes -- read one line byte-by-byte, up to and including '\n', so no
+     *   body bytes are consumed (BufferedReader would read ahead and swallow them).
+     * inputs    : in -- the raw socket input stream
+     * outputs   : the line without its trailing \r\n, or null at end of stream
+     * called by : parseHeader
+     * will call : nothing
+     */
     private String readLineBytes(InputStream in)  throws java.io.IOException {
         /*
         Issue- When you call rawIn.read(), those bytes will be missing.
@@ -68,13 +92,30 @@ public class MyHttp {
 
     }
 
+    /*
+     * setHttp -- read a whole HTTP message (request or response) from a socket into
+     *            this object: start line and headers first, then the body.
+     * inputs    : socket -- connected socket to read from
+     * outputs   : none returned; fills this object's fields (see parseHeader, parseBody)
+     * called by : SimpleClient.main (a response), ProxyServer.serviceClient (a request)
+     * will call : parseHeader, parseBody
+     */
     public void setHttp(Socket socket) throws IOException {
         InputStream rawIn = socket.getInputStream(); // Keeps the raw stream available
         parseHeader(rawIn);
         parseBody(rawIn);
     }
         
-    // Parses the HTTP header and puts into HttpResponse object relevant information into the response
+    /*
+     * parseHeader -- read the start line and every header line up to the blank line.
+     *   Records Content-Length and Content-Type, keeps each header line in
+     *   rawHeaderlines, then works out the destination host, port and path.
+     * inputs    : headerIn -- the raw socket input stream
+     * outputs   : none returned; sets contentLength, contentType, rawHeaderlines,
+     *             the start-line fields and the destination fields
+     * called by : setHttp
+     * will call : readLineBytes, parseStartLine, resolverDestination
+     */
     private void parseHeader(InputStream headerIn) throws IOException {
         // Headers are safe to read line-by-line using readLine()
         // Strip the network newline codes for clean string comparison/printing
@@ -122,6 +163,15 @@ public class MyHttp {
 
 
 
+    /*
+     * parseStartLine -- split the first line of the message into its parts.
+     *   Response line ("HTTP/1.0 404 Not Found"): sets protocol, statusCode, statusMessage.
+     *   Request line ("GET http://host/x HTTP/1.0"): sets method, rawUri, protocol.
+     * inputs    : line -- the start line without \r\n
+     * outputs   : none returned; sets the fields listed above
+     * called by : parseHeader
+     * will call : nothing
+     */
     private void parseStartLine(String line) {
         String[] parts = line.split(" ", 3);   // limit 3 keeps "Not Found" whole
         if (parts.length < 2) {
@@ -148,7 +198,8 @@ public class MyHttp {
      *   A port that is present but invalid (e.g. "abc" or 99999) becomes 0, so
      *   ProxyServer rejects the request instead of silently trying port 80.
      * inputs    : hostHeader -- value of the Host: header ("" if none)
-     * outputs   : sets this.host, this.port, this.uri, this.pathAndQuery, this.url
+     * outputs   : none returned; sets this.host, this.port, this.uri, this.pathAndQuery,
+     *             this.url and this.urlfull (host stays null if it cannot be determined)
      * called by : parseHeader
      * will call : splitHostPort, parsePort, defaultPort
      */
@@ -261,7 +312,16 @@ public class MyHttp {
         }
     }
 
-    // Parses the HTTP body and stores it into the HttpResponse object
+    /*
+     * parseBody -- read the message body into this.body.
+     *   Content-Length present        : read exactly that many bytes.
+     *   No Content-Length, a request  : no body (empty array).
+     *   No Content-Length, a response : read until the server closes the connection.
+     * inputs    : rawIn -- the raw socket input stream, positioned at the first body byte
+     * outputs   : none returned; sets this.body
+     * called by : setHttp
+     * will call : nothing
+     */
     private void parseBody(InputStream rawIn) throws IOException {
         // For binary resources, read bytes directly from the input stream
         int contLength = this.contentLength;

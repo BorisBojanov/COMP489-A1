@@ -41,6 +41,16 @@ public class SimpleWebServer {
     private static final Path root = Paths.get(DROOT).toAbsolutePath().normalize();
     // private static final String parentDir = Path.of("").toAbsolutePath().getParent().toString();
     private static final String INDEX_FILE = "index.html";
+
+    /*
+     * main -- entry point. Checks that the document root exists, opens a
+     *         ServerSocket and accepts clients forever, serving each on its own thread.
+     * inputs    : args[0] = listen port (optional, default 9806)
+     *             args[1] = document root folder (optional, default src/comp489/a1/www)
+     * outputs   : none returned; prints the document root and status messages to stdout
+     * called by : the JVM
+     * will call : handle (on a new thread per client)
+     */
     public static void main(String[] args) {
         // print root, and if (!Files.isDirectory(root)) print an error and exit
         System.out.println("Document root: " + root);
@@ -74,6 +84,14 @@ public class SimpleWebServer {
         }
     }
 
+    /*
+     * send400 -- send a complete "400 Bad Request" response with a plain-text body.
+     * inputs    : rawOut  -- the client socket's output stream
+     *             message -- text explaining why the request was rejected
+     * outputs   : none returned; writes status line, headers, blank line and body to rawOut
+     * called by : handle (method is not GET, or the URL path is malformed)
+     * will call : nothing (OutputStream.write / flush only)
+     */
     private static void send400(OutputStream rawOut, String message) throws IOException {
         String body = message;
         String response = "HTTP/1.0 400 Bad Request\r\n"
@@ -85,6 +103,14 @@ public class SimpleWebServer {
         rawOut.flush();
     }
 
+    /*
+     * send404 -- send a complete "404 Not Found" response with a plain-text body.
+     * inputs    : rawOut  -- the client socket's output stream
+     *             message -- short explanation shown to the client
+     * outputs   : none returned; writes status line, headers, blank line and body to rawOut
+     * called by : handle (file missing, unreadable, a directory, or outside the document root)
+     * will call : nothing (OutputStream.write / flush only)
+     */
     private static void send404(OutputStream rawOut, String message) throws IOException {
         String body = message;
         String response = "HTTP/1.0 404 Not Found\r\n"
@@ -96,6 +122,15 @@ public class SimpleWebServer {
         rawOut.flush();
     }
 
+    /*
+     * sendConfirmation -- send a "200 OK" response whose body is a plain-text message.
+     *   Debugging aid from early testing; real files are sent by serve().
+     * inputs    : rawOut  -- the client socket's output stream
+     *             message -- text to send as the body
+     * outputs   : none returned; writes status line, headers, blank line and body to rawOut
+     * called by : nothing at present (its call in handle is commented out)
+     * will call : nothing (OutputStream.write / flush only)
+     */
     private static void sendConfirmation(OutputStream rawOut, String message) throws IOException {
         String body = message;
         String response = "HTTP/1.0 200 OK\r\n"
@@ -107,6 +142,17 @@ public class SimpleWebServer {
         rawOut.flush();
     }
 
+    /*
+     * serve -- send a "200 OK" response followed by the file's raw bytes, so binary
+     *          files such as JPEGs arrive intact.
+     * inputs    : rawOut    -- the client socket's output stream
+     *             imagePath -- the file to send (already checked to be a readable file
+     *                          inside the document root)
+     * outputs   : none returned; writes status line, Content-Type, Content-Length,
+     *             blank line, then the file bytes to rawOut
+     * called by : handle
+     * will call : nothing in this class (Files.probeContentType, Files.size, Files.copy)
+     */
     private static void serve(OutputStream rawOut, Path imagePath) throws IOException {
         String contentType = Files.probeContentType(imagePath);
         long contentLength = Files.size(imagePath);
@@ -119,6 +165,18 @@ public class SimpleWebServer {
         rawOut.flush();
     }
     
+    /*
+     * handle -- process one HTTP request: read the request line, reject anything
+     *           that is not GET, map the URL path to a file under the document root,
+     *           then send the file (200) or an error (400 / 404).
+     *   Path steps: strip query string -> URL-decode -> add index.html for "/" ->
+     *   resolve against root -> normalize -> check it is a readable file inside root.
+     * inputs    : client -- the accepted client socket
+     *             root   -- absolute, normalized document root
+     * outputs   : none returned; writes exactly one HTTP response to the client
+     * called by : main (on a worker thread)
+     * will call : send400, send404, serve
+     */
     private static void handle(Socket client, Path root) throws IOException {
         
         BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));

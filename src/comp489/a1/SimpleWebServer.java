@@ -12,12 +12,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.charset.StandardCharsets;
+
 /**
- * ============================================================================
- * ASSIGNMENT 1 - STARTER SCAFFOLD (basic web server)  ***implement the TODOs***
- * ----------------------------------------------------------------------------
- * Do NOT post completed assignment code to the Unit 4 Discussion.
- * ============================================================================
+ * Program: SimpleWebServer
+ * Course  : COMP 489 - Assignment 1
  *
  * A basic HTTP server built on ServerSocket. For each connection it:
  *   1. reads the request line (e.g. "GET /index.html HTTP/1.0"),

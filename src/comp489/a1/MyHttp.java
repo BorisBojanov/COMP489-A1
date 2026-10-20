@@ -95,7 +95,6 @@ public class MyHttp {
             String value = line.substring(colonIndex + 1).trim();
 
             String cleanLine = line.replace("\r", "").replace("\n", "");
-            System.out.println(cleanLine);
 
             switch (name) {
                 case "host":
@@ -142,6 +141,19 @@ public class MyHttp {
         }
     }
 
+    /*
+     * resolverDestination -- work out the real target host, port and path.
+     *   Port precedence (first one found wins):
+     *     1. an explicit port in an absolute URL   GET http://localhost:8080/x HTTP/1.0
+     *     2. an explicit port in the Host: header  Host: localhost:8080
+     *     3. the default port for the scheme       http=80, https=443, ftp=21
+     *   A port that is present but invalid (e.g. "abc" or 99999) becomes 0, so
+     *   ProxyServer rejects the request instead of silently trying port 80.
+     * inputs    : hostHeader -- value of the Host: header ("" if none)
+     * outputs   : sets this.host, this.port, this.uri, this.pathAndQuery, this.url
+     * called by : parseHeader
+     * will call : splitHostPort, parsePort, defaultPort
+     */
     private void resolverDestination(String hostHeader) {
         if (rawUri == null) return;
         String scheme = "http";
@@ -156,6 +168,7 @@ public class MyHttp {
                 }
                 h = uri.getHost();
                 p = uri.getPort();              // -1 if none given
+                if (p > 65535) p = 0;           // URI accepts any digits; TCP does not
                 
                 if (uri.getRawPath() == null || uri.getRawPath().isEmpty()) {
                     pathWithQuery = "/";
@@ -172,14 +185,11 @@ public class MyHttp {
         }
         
         if (h == null && hostHeader != null && !hostHeader.isEmpty()) {   // origin form + Host:
-            int colon = hostHeader.lastIndexOf(':');
-            if (colon > 0) {
-                h = hostHeader.substring(0, colon);
-                try { p = Integer.parseInt(hostHeader.substring(colon + 1)); }
-                catch (NumberFormatException e) { p = -1; }
-            } else {
-                h = hostHeader;
-            }
+            // The Host header carries no scheme, so if it has no port the
+            // default below still comes from the scheme (http unless told otherwise).
+            String[] hostAndPort = splitHostPort(hostHeader);
+            h = hostAndPort[0];
+            p = parsePort(hostAndPort[1]);
         }
         if (p == -1) {
             p = defaultPort(scheme);
@@ -193,6 +203,57 @@ public class MyHttp {
     
     }   
  
+    /*
+     * splitHostPort -- split an authority string "host[:port]" into its two parts.
+     *   Handles bracketed IPv6 literals such as "[::1]:8080".
+     *   Also usable later for a "CONNECT host:443" request line (https tunnelling).
+     * inputs    : authority, e.g. "localhost:8080", "www.google.com", "[::1]:8080"
+     * outputs   : String[2] {host, portText}; portText is null when no port is given
+     * called by : resolverDestination
+     * will call : nothing
+     */
+    private static String[] splitHostPort(String authority) {
+        String a = authority.trim();
+        if (a.startsWith("[")) {                                  // IPv6 literal
+            int close = a.indexOf(']');
+            if (close > 0) {
+                String rest = a.substring(close + 1);
+                return new String[] { a.substring(1, close), rest.startsWith(":") ? rest.substring(1) : null };
+            }
+        }
+        int colon = a.lastIndexOf(':');
+        if (colon > 0 && colon == a.indexOf(':')) {                // exactly one colon: host:port
+            return new String[] { a.substring(0, colon), a.substring(colon + 1) };
+        }
+        return new String[] { a, null };
+    }
+
+    /*
+     * parsePort -- convert port text into a TCP port number.
+     * inputs    : text -- the digits after the colon, or null
+     * outputs   : 1..65535 if valid; -1 if no port was given (caller uses the
+     *             scheme default); 0 if a port was given but is invalid
+     * called by : resolverDestination
+     * will call : nothing
+     */
+    private static int parsePort(String text) {
+        if (text == null || text.isEmpty()) return -1;
+        try {
+            int n = Integer.parseInt(text.trim());
+            return (n >= 1 && n <= 65535) ? n : 0;
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /*
+     * defaultPort -- the well-known port for a URL scheme.
+     *   Adding a new protocol later only means adding a case here.
+     * inputs    : scheme in lower case ("http", "https", "ftp", ...)
+     * outputs   : port number
+     * called by : resolverDestination
+     * will call : nothing
+     */
     private int defaultPort(String scheme) {
         switch (scheme) {
             case "https": return 443;
@@ -202,61 +263,61 @@ public class MyHttp {
         }
     }
 
-    private String parseRequestLine(String requestLine) {
-        // Example request line: "GET /path/to/resource?query=1 HTTP/1.1"
-        String[] parts = requestLine.split(" ");
-        if (parts.length >= 3) {
-            String method = parts[0]; // e.g., "GET"
-            String rawUri = parts[1];  // e.g., "/path/to/resource?query=1"
+    // private String parseRequestLine(String requestLine) {
+    //     // Example request line: "GET /path/to/resource?query=1 HTTP/1.1"
+    //     String[] parts = requestLine.split(" ");
+    //     if (parts.length >= 3) {
+    //         String method = parts[0]; // e.g., "GET"
+    //         String rawUri = parts[1];  // e.g., "/path/to/resource?query=1"
             
-            URI uri = parseUri(rawUri);
-            String path = uri.getPath();
-            String fullurl = fullURL(uri);
+    //         URI uri = parseUri(rawUri);
+    //         String path = uri.getPath();
+    //         String fullurl = fullURL(uri);
 
-            this.urlfull = fullurl; // Store the full URL for later use
-            this.method = method; // Store the HTTP method for later use
-            this.rawUri = rawUri; // Store the raw URI for later use in fullURL()
-            return path; // Return the requested path
-        }
-        return null;
-    }
+    //         this.urlfull = fullurl; // Store the full URL for later use
+    //         this.method = method; // Store the HTTP method for later use
+    //         this.rawUri = rawUri; // Store the raw URI for later use in fullURL()
+    //         return path; // Return the requested path
+    //     }
+    //     return null;
+    // }
 
-    private URI parseUri(String rawUri) {
-        // Represents the resource identifier as sent by the client
-        try {
-            URI uri = new URI(rawUri);
-            System.out.println("Parsed URI Path: " + uri.getPath());
-            System.out.println("Parsed URI Query: " + uri.getQuery());
-            return uri;
-        } catch (URISyntaxException e) {
-            e.printStackTrace();
-            return null;
-        }
-    }
+    // private URI parseUri(String rawUri) {
+    //     // Represents the resource identifier as sent by the client
+    //     try {
+    //         URI uri = new URI(rawUri);
+    //         System.out.println("Parsed URI Path: " + uri.getPath());
+    //         System.out.println("Parsed URI Query: " + uri.getQuery());
+    //         return uri;
+    //     } catch (URISyntaxException e) {
+    //         e.printStackTrace();
+    //         return null;
+    //     }
+    // }
 
-    private String fullURL(URI uri){
-       try {
-        if (host != null) {
-            // Determine the protocol (assume http for standard raw sockets unless handling SSL/TLS)
-            String protocol = "http://"; 
+    // private String fullURL(URI uri){
+    //    try {
+    //     if (host != null) {
+    //         // Determine the protocol (assume http for standard raw sockets unless handling SSL/TLS)
+    //         String protocol = "http://"; 
             
-            // Construct the string representation of the full URL
-            String fullUrlString = protocol + host + rawUri;
+    //         // Construct the string representation of the full URL
+    //         String fullUrlString = protocol + host + rawUri;
             
-            // Convert to java.net.URL objects
-            // URL fullUrl = new URL(fullUrlString);
-            URL fullUrl = uri.toURL();
-            System.out.println("Full URL String: " + fullUrlString);
-            System.out.println("Base URL (No query): " + fullUrl.getProtocol() + "://" + fullUrl.getHost() + ":" + fullUrl.getPort() + fullUrl.getPath());
-            return fullUrlString;
-        } else {
-            System.out.println("Could not parse the full URL: 'host' header is missing");
-        }
-       } catch (MalformedURLException e) {
-           e.printStackTrace();
-       }
-        return null;
-    }
+    //         // Convert to java.net.URL objects
+    //         // URL fullUrl = new URL(fullUrlString);
+    //         URL fullUrl = uri.toURL();
+    //         System.out.println("Full URL String: " + fullUrlString);
+    //         System.out.println("Base URL (No query): " + fullUrl.getProtocol() + "://" + fullUrl.getHost() + ":" + fullUrl.getPort() + fullUrl.getPath());
+    //         return fullUrlString;
+    //     } else {
+    //         System.out.println("Could not parse the full URL: 'host' header is missing");
+    //     }
+    //    } catch (MalformedURLException e) {
+    //        e.printStackTrace();
+    //    }
+    //     return null;
+    // }
 
     // Parses the HTTP body and stores it into the HttpResponse object
     private void parseBody(InputStream rawIn) throws IOException {

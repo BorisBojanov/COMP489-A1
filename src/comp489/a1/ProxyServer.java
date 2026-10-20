@@ -44,12 +44,16 @@ Question: where in the program does the real destination information exist, and 
 targetHost == "myproxyAssignment.com" compares object references, not text. In Java, what’s the right way to compare string contents?
 A bigger design question: the assignment tests with localhost, 127.0.0.1, google.com and an ftp host. If the proxy only allows one hostname, which of those tests pass? Is a host allow-list something the assignment asks for?
 
-3. TODO: Infinite loop in readRequestHead
+3. DONE: Infinite loop in readRequestHead
 
 Trace it with a two-line request. How many times is readLine() called in total? Look at what’s inside the while body.
 Also think about this: BufferedReader reads ahead in chunks. If it swallows bytes beyond the blank line (say, a POST body), what happens to them when you later relay from client.getInputStream()? A request head that is consumed is also no longer available to forward. Where does the proxy get the text it sends to the target?
 
-4. TODO: parseTargetHost splits the wrong thing
+    Fixed: readRequestHead was replaced by MyHttp.parseHeader, which calls readLineBytes once per
+    loop (in the while condition) and reads byte-by-byte, so nothing past the blank line is swallowed.
+    The head is kept in rawHeaderlines and rebuilt by createRequestHead; the body is read by Content-Length.
+
+4. DONE: parseTargetHost splits the wrong thing
 
 Take this head and write out what split(" ") returns:
   GET /testfile.html HTTP/1.0\r\nHost: localhost:8080\r\n\r\n
@@ -59,11 +63,17 @@ Will any element ever start with "host:" and also contain the host value? And wh
 The comment says a request may have an absolute URL or only a Host: header. The method is written as if everything were one line. What would be a better unit to split on first?
 The debug println inside the loop will spam the console. Remove it before submission (the marks include “user-friendly”).
 
-5. TODO: parseTargetPort
+    Fixed: the head is now split into lines first (readLineBytes), then each line at its first ':'.
+    The host comes from the absolute URL if present, otherwise from the Host: header. Debug println removed.
+
+5. DONE: parseTargetPort
 
 It’s fine for absolute URLs. But if the host came from a Host: header, does your port logic ever see the header? Also, what default would be right for https:// or ftp://, rather than 80? You don’t need to solve https and ftp today, but the design should allow for them.
 
-6. TODO: Request rewriting
+    Fixed in MyHttp.resolverDestination: port = URL port, else Host: header port, else defaultPort(scheme)
+    (http 80, https 443, ftp 21). Invalid ports become 0 and are rejected by serviceClient.
+
+6. DONE: Request rewriting
 
 A client talking to a proxy sends GET http://localhost:8080/testfile.html HTTP/1.0. Your SimpleWebServer (and the spec) expects GET /testfile.html HTTP/1.0. If the proxy forwards the line unchanged, what does your web server do with it? That is the “request rewriting” your scaffold comment mentions.
 
@@ -141,6 +151,7 @@ public class ProxyServer {
         // parsed the destination
         if (targetHost == null || targetHost.isEmpty() || targetPort <= 0) {
             System.out.println("Invalid target host or port");
+            client.close(); // Close the client socket if the target host or port is invalid
             return;
         }
 
@@ -206,8 +217,11 @@ public class ProxyServer {
             requestHead.append(header).append("\r\n");
         }
         
-        // Finish off with a blank line. Must be "\r\n\r\n"
-        requestHead.append("\r\n\r\n");
+        // Finish off with ONE blank line. Every header above already ended in
+        // \r\n, so a single extra \r\n produces the required "\r\n\r\n".
+        // (Appending "\r\n\r\n" here would add a stray empty line that the
+        // server would read as the first two bytes of a POST body.)
+        requestHead.append("\r\n");
         return requestHead.toString();
     }
 

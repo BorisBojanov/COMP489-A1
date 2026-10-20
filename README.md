@@ -19,7 +19,7 @@ beyond a JDK.
 
 ## Project layout
 
-```
+```text
 COMP489-A1/
 ├── .project, .classpath        Eclipse project files
 ├── .vscode/settings.json       VS Code (Java extension) source/output paths
@@ -94,7 +94,7 @@ java -cp bin dcj.examples.networking.PipedStreamExample
 Programs that need **two terminals** (a server and a client) are marked ⇄.
 
 | Command | What it shows |
-|---|---|
+| --- | --- |
 | `java -cp bin dcj.examples.networking.InetAddressDemo www.oreilly.com` | Resolve host names ↔ IP addresses |
 | ⇄ `... EchoServer 5000` then `... EchoClient localhost 5000` | TCP `Socket`/`ServerSocket` round trip |
 | ⇄ `... UdpReceiver 5000` then `... UdpSender localhost 5000 "hi"` | UDP datagrams |
@@ -112,7 +112,7 @@ second terminal.
 
 ## Your Assignment 1 (the `comp489.a1` package)
 
-```
+```text
 Client  --(1)-->  ProxyServer  --(2)-->  SimpleWebServer
         <--(4)--               <--(3)--
 ```
@@ -126,7 +126,7 @@ Client  --(1)-->  ProxyServer  --(2)-->  SimpleWebServer
 4. The proxy relays the reply back to the client.
 
 | Program | Default port | Arguments |
-|---|---|---|
+| --- | --- | --- |
 | `SimpleWebServer` | 9806 | `[port] [docRoot]` |
 | `ProxyServer` | 8888 | `[listenPort]` |
 | `SimpleClient` | connects to `localhost:8888` | `[proxyHost] [proxyPort]` |
@@ -154,7 +154,7 @@ No output means success.
 All three are started from the `COMP489-A1` folder.
 
 | Terminal | Command | You should see |
-|---|---|---|
+| --- | --- | --- |
 | 1 – web server | `java -cp bin comp489.a1.SimpleWebServer` | `SimpleWebServer listening on port 9806 ...` |
 | 2 – proxy | `java -cp bin comp489.a1.ProxyServer` | `ProxyServer listening on port 8888 ...` |
 | 3 – client | `java -cp bin comp489.a1.SimpleClient` | `Enter resource URL to request (...)` |
@@ -169,7 +169,7 @@ folder. The `www` folder itself never appears in the URL.
 
 **A. Web server on its own (no proxy)** – open this in a browser:
 
-```
+```text
 http://localhost:9806/test/testfile.html
 ```
 
@@ -186,7 +186,7 @@ Expected: `HTTP/1.0 200 OK`, `Content-Type: text/html`, `Content-Length: 1597`, 
 
 **C. Through the proxy with your own SimpleClient** – in Terminal 3, when it asks for a URL, type:
 
-```
+```text
 http://localhost:9806/test/testfile.html
 ```
 
@@ -200,7 +200,7 @@ If it logs the full `http://...` URL or `GET null`, the proxy's request rewritin
 ### Test inputs for your test plan
 
 | # | Input | Expected result |
-|---|---|---|
+| --- | --- | --- |
 | 1 | Browser: `http://localhost:9806/test/testfile.html` | Page displays (web server alone) |
 | 2 | Browser: `http://localhost:9806/test/testfile.jpg` | Image displays |
 | 3 | Client: `http://localhost:9806/test/testfile.html` | `200 OK`, `Content-Length: 1597` |
@@ -222,5 +222,6 @@ Record the **actual output** next to each expected result when you write the tes
 - **ftp://** (the assignment's `ftp://ftp.us.dell.com/readme.txt` test) is not handled; it is not HTTP.
 - Remove debug `println` calls before submitting; add the required file/function headers; write the test plan.
 
-> Per the Unit 4 rules: **do not post completed source/pseudocode** for the
-> assignment to the discussion forum – share ideas and problem-solving steps only.
+## References
+
+Defog Tech. (2018). *Java Socket Programming* [Video Playlist]. Youtube <https://www.youtube.com/watch?v=bWKbdPAovFA&list=PLoW9ZoLJX39Xcdaa4Dn5WLREHblolbji4>

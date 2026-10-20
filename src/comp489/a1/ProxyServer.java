@@ -5,7 +5,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
@@ -23,68 +22,67 @@ import java.util.List;
  *      the two directions of the relay (client->server and server->client)
  *      each run on their own thread so data can flow both ways at once.
  * 
- * Because it must send and receive at the same time, each direction of the
- * relay is moved on its own THREAD (the relay() helper and the pump Runnable below). 
- *      This scaffold sets up the accept loop and the two-way pump skeleton; 
- *      you implement how the target host/port is chosen and any request
- *      rewriting your assignment requires.
+ * Tt must send and receive at the same time, each direction of the
+ *      relay is moved on its own THREAD (the relay() helper and the pump Runnable below). 
+ *      
+ * This file implements the accept loop and the two-way relay threads; 
+ *      the target host/port is chosen and any request as the assignment specifies.
  * 
  *  Inputs  : args[0] = listen port (optional, default 8888)
  *  Outputs : relays bytes between client and target; logs to stdout
  * 
- * 
- * 
 1. Done serviceClient never reads the request
 
-client.getLocalAddress().getHostName() is the address of this machine, the proxy itself. client.getPort() is the client’s temporary outgoing port, a random number like 52314.
-Question: where in the program does the real destination information exist, and which of your own methods was written to get it out?
+client.getLocalAddress().getHostName() is the address of this machine, the proxy itself. 
 
-2. DONE == on strings
+client.getPort() is the client’s temporary outgoing port (a random number)
 
-targetHost == "myproxyAssignment.com" compares object references, not text. In Java, what’s the right way to compare string contents?
-A bigger design question: the assignment tests with localhost, 127.0.0.1, google.com and an ftp host. If the proxy only allows one hostname, which of those tests pass? Is a host allow-list something the assignment asks for?
+Design question: 
+    Where in the program does the real destination information exist, and which of your own methods was written to get it out?
+    
+    Tests with (localhost, 127.0.0.1, google.com and an ftp host) 
+        If the proxy only allows one hostname, which of those tests pass? Is a host allow-list something the assignment asks for?
 
-3. DONE: Infinite loop in readRequestHead
 
-Trace it with a two-line request. How many times is readLine() called in total? Look at what’s inside the while body.
-Also think about this: BufferedReader reads ahead in chunks. If it swallows bytes beyond the blank line (say, a POST body), what happens to them when you later relay from client.getInputStream()? A request head that is consumed is also no longer available to forward. Where does the proxy get the text it sends to the target?
+    BufferedReader reads ahead in chunks. If it swallows bytes beyond the blank line (say, a POST body), what happens to them when you later relay from client.getInputStream()? A request head that is consumed is also no longer available to forward. Where does the proxy get the text it sends to the target?
 
-    Fixed: readRequestHead was replaced by MyHttp.parseHeader, which calls readLineBytes once per
-    loop (in the while condition) and reads byte-by-byte, so nothing past the blank line is swallowed.
-    The head is kept in rawHeaderlines and rebuilt by createRequestHead; the body is read by Content-Length.
+    readRequestHead was replaced by MyHttp.parseHeader, which calls readLineBytes once per
+        loop (in the while condition) and reads byte-by-byte, so nothing past the blank line is swallowed.
+        The head is kept in rawHeaderlines and rebuilt by createRequestHead; the body is read by Content-Length.
 
-4. DONE: parseTargetHost splits the wrong thing
+    join() waits for both pump threads. If the client keeps its side open after sending the request, does c2t ever end? Look up Socket.shutdownOutput() (JNP p250, “half-closed sockets”).
 
-Take this head and write out what split(" ") returns:
-  GET /testfile.html HTTP/1.0\r\nHost: localhost:8080\r\n\r\n
+parseTargetHost: splits the request head into lines, then again to look for host. 
+    Take this head and write out what split(" ") returns:
+    GET /testfile.html HTTP/1.0\r\nHost: localhost:8080\r\n\r\n
 
-Will any element ever start with "host:" and also contain the host value? And what does parts[1] give you for that request, and what does URI.getHost() return for it?
+Will any element ever start with "host:" and also contain the host value? 
+what does parts[1] give you for that request, and what does URI.getHost() return for it?
 
-The comment says a request may have an absolute URL or only a Host: header. The method is written as if everything were one line. What would be a better unit to split on first?
-The debug println inside the loop will spam the console. Remove it before submission (the marks include “user-friendly”).
+Request may have an absolute URL or only a Host: header. 
+    The head is split into lines first (readLineBytes), then each line at its first ':'.
+    The host comes from the absolute URL if present, otherwise from the Host: header.
 
-    Fixed: the head is now split into lines first (readLineBytes), then each line at its first ':'.
-    The host comes from the absolute URL if present, otherwise from the Host: header. Debug println removed.
+parseTargetPort 
+    If the host came from a Host: header, the port logic ever see the header? 
+    w\What default would be right for https:// or ftp://, rather than 80? 
 
-5. DONE: parseTargetPort
-
-It’s fine for absolute URLs. But if the host came from a Host: header, does your port logic ever see the header? Also, what default would be right for https:// or ftp://, rather than 80? You don’t need to solve https and ftp today, but the design should allow for them.
-
-    Fixed in MyHttp.resolverDestination: port = URL port, else Host: header port, else defaultPort(scheme)
+    Moved this to MyHttp.resolverDestination: port = URL port, else Host: header port, else defaultPort(scheme)
     (http 80, https 443, ftp 21). Invalid ports become 0 and are rejected by serviceClient.
 
-6. DONE: Request rewriting
 
-A client talking to a proxy sends GET http://localhost:8080/testfile.html HTTP/1.0. Your SimpleWebServer (and the spec) expects GET /testfile.html HTTP/1.0. If the proxy forwards the line unchanged, what does your web server do with it? That is the “request rewriting” your scaffold comment mentions.
+A client talking to a proxy sends:
+     GET http://localhost:8080/testfile.html HTTP/1.0. 
+SimpleWebServer expects:
+     GET /testfile.html HTTP/1.0. 
+    
+    If the proxy forwards the line unchanged, what does your web server do with it? That is the “request rewriting” your scaffold comment mentions.
 
-7. Done Resource and shutdown issues
 
-The original scaffold had try (client; ...). You dropped it, so the client socket is never closed. Check every exit path, including the “denied” branch.
-join() waits for both pump threads. If the client keeps its side open after sending the request, does c2t ever end? Look up Socket.shutdownOutput() (JNP p250, “half-closed sockets”).
 
     Fixed by adding the client socket to the try-with-resources statement.
 
-8. TODO: Tidy-up (documentation is 20% of the grade)
+
 
 The file header still contains scaffold text (“This scaffold sets up...”, lines 29-33), and a “Do NOT post” note may have been left behind elsewhere. Rewrite it in your own words.
 The unused inner class myHttpResponse and the commented-out block at the end of main should go, or be used. Dead code reads as unfinished.
@@ -179,15 +177,26 @@ public class ProxyServer {
 
 
                 // The two-way relay: Where the client socket is connected to the server's real 'target' socket once we have parsed the destination.
+                // A half-closed socket 
                 // Use client -> target on this thread's own worker...
-                Thread c2t = new Thread(() -> relay(safeIn(client), safeOut(target), "client->target"));
-                // ...and target -> client on another.
-                Thread t2c = new Thread(() -> relay(safeIn(target), safeOut(client), "target->client"));
+                Thread c2t = new Thread(() -> {
+                    relay(safeIn(client), safeOut(target), "client->target");
+                    try { target.shutdownOutput(); } catch (IOException ignored) { }
+                });
+                // target -> client on another.
+                // When the target finishes, half-close the client side so the client sees
+                // end-of-stream (needed when the response has no Content-Length).
+                Thread t2c = new Thread(() -> {
+                    relay(safeIn(target), safeOut(client), "target->client");
+                    try { client.shutdownOutput(); } catch (IOException ignored) { }
+                });
 
                 c2t.start();
                 t2c.start();
-                c2t.join();
-                t2c.join();
+
+                t2c.join();     // wait for target->client relay to finish
+                client.close(); // force-close the client socket if the client never closes its side
+                c2t.join();     // now wait for client->target relay to finish
             } catch (IOException | InterruptedException e) {
                 System.out.println("Proxy relay ended: " + e.getMessage());
             }

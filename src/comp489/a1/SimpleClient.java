@@ -2,13 +2,14 @@ package comp489.a1;
 
 import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
 // import java.io.ByteArrayInputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.io.ByteArrayOutputStream;
-
+import java.net.SocketTimeoutException;
+import java.net.URI;
+import java.net.URISyntaxException;
 
 /**
  * Program: SimpleClient
@@ -60,14 +61,16 @@ import java.io.ByteArrayOutputStream;
  *   [RAW BINARY BYTES OF THE PDF FILE]
  * 
  * 
- * TODO 2. The user is supposed to type a URL, not a path. The assignment says the client lets the user “input the resource URL.” 
+ * The user is supposed to type a URL, not a path. The assignment says the client lets the user “input the resource URL.” 
  *  Right now you ask for /index.html and send Host: localhost, which is the proxy’s own name. 
  *      Look at what the proxy receives.
  *          Last time I asked what the proxy has to extract from GET http://example.com/page.html HTTP/1.0. 
  *          Which of those pieces does your client currently have no way to send?
  * 
- * TODO Issue: What happens when there is no Content-Length? 
- *  body only gets read when contentLength > 0. Predict what the client prints for a 404 page, 
+ * What happens when there is no Content-Length? 
+ *      When no length is given, the body ends when the server closes the connection. So you read until end of stream (read() returns -1).
+ *  
+ * Body only gets read when contentLength > 0. Predict what the client prints for a 404 page, 
  *  for https://www.google.com (assignment test), and for any server that doesn’t send that header. 
  *  Then think about how an HTTP/1.0 client knows the body has ended when no length is given. 
  *      JNP Ch 6 (pp169–175) talks about this.
@@ -82,65 +85,88 @@ import java.io.ByteArrayOutputStream;
  *      Authorization: Bearer mock_token_12345
  *      Content-Length: 0
  * 
- * TODO What if the server never answers? You open a Socket with no timeout. 
- *  What does the user see if the proxy accepts the connection and then goes silent? (JavaNetProgr Ch 8 covers SO_TIMEOUT, p261.)
-
-
- * Tidy-up before submit:
-    response.contentLength is never set.
-    myHttpResponse is an inner class, which is why you write new SimpleClient().new myHttpResponse(). 
-        Ask yourself whether it needs to belong to an instance. A static nested class (or its own file) would be cleaner.
+ * What if the server never answers?  
+ * What does the user see if the proxy accepts the connection and then goes silent? (SO_TIMEOUT)
  */
 
 public class SimpleClient {
+
+    // Used when the user just presses Enter. SimpleWebServer listens on 9806 by default.
+    private static final String DEFAULT_URL = "http://localhost:9806/";
 
     public static void main(String[] args) {
         // For early testing, default to a real server; later use your proxy host/port.
         String host = (args.length > 0) ? args[0] : "localhost";
         int port = (args.length > 1) ? Integer.parseInt(args[1]) : 8888;
-
+        int timeoutMs = 5000; // 5 seconds
+        int maxwaitMs = 7000; // 7 seconds
         try (BufferedReader console = new BufferedReader(new InputStreamReader(System.in))) {
             System.out.print("Enter resource URL to request (e.g. http://example.com/page.html): ");
             String resource = console.readLine();
+
+            // Blank input -> default to a FULL URL (a bare "/" has no host for the proxy to use)
             if (resource == null || resource.isBlank()) {
-                resource = "/";
+                resource = DEFAULT_URL;
+                System.out.println("No URL entered, using default: " + resource);
             }
+            resource = resource.trim();
+
+            // Check the input really is an absolute http(s) URL: scheme://host[:port]/path
+            URI target;
+            try {
+                target = new URI(resource);          // URISyntaxException if malformed (e.g. spaces)
+            } catch (URISyntaxException e) {
+                System.out.println("Not a valid URL: " + e.getMessage());
+                return;
+            }
+            String scheme = target.getScheme();
+            if (scheme == null || target.getHost() == null) {
+                System.out.println("Please enter a full URL, e.g. " + DEFAULT_URL);
+                return;
+            }
+            if (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https")) {
+                System.out.println("Unsupported scheme '" + scheme + "'. Use http:// or https://");
+                return;
+            }
+            // Host header = the TARGET server, not the proxy we connect to
+            String hostHeader = target.getHost() + (target.getPort() != -1 ? ":" + target.getPort() : "");
+
             MyHttp response = new MyHttp();
 
-
-            // Notice: Do NOT wrap the InputStream in a BufferedReader entirely if you want raw access.
-            // Instead, read from the raw InputStream, or wrap a temporary reader just for headers.
-            try (Socket socket = new Socket(host, port);
+            // Create an UNCONNECTED socket, connect with a timeout, THEN get the streams.
+            // (Calling getOutputStream() before connect() throws "Socket is not connected".)
+            try (Socket socket = new Socket()) {
+                socket.connect(new InetSocketAddress(host, port), timeoutMs);  // connect timeout (ms)
+                socket.setSoTimeout(maxwaitMs);                                // SO_TIMEOUT: max wait per read()
                 PrintWriter out = new PrintWriter(socket.getOutputStream(), false);
-                InputStream rawIn = socket.getInputStream(); // Keeps the raw stream available
-            ){
 
-                // 1. Send requst
-                sendInitialRequest(out, resource, host);
+                // 1. Send request: absolute URL in the request line, target in Host:
+                sendInitialRequest(out, resource, hostHeader);
+                // Half closed in both directions 
+                socket.shutdownOutput();   //proxy: request complete. Just READ the response.
 
-                // 2. Parse Headers Line-by-Line using a custom line reader or safe wrapper
-                // We parse manually from the stream or use a scanner to avoid over-consuming binary data.
+                // 2. Parse status line + headers byte-by-byte, then the body (MyHttp.setHttp)
                 response.setHttp(socket);
-                int contentLength = response.contentLength;
-                if (contentLength <= 0) contentLength = 0;
-                
-                System.out.println("Headers read successfully.");
-                
-                // 3. Read the Body using the Content-Length count
-                if (contentLength > 0) {
-                    if (response.contentType != null) { System.out.println("Content-Type: " + response.contentType); }
-                    System.out.println("--- BODY (Reading " + contentLength + " bytes) ---");
-                    // // only parse the body if the content length is greater than 0
-                    // parseBody(contentLength, rawIn, response);
-                }
 
-            } catch ( IOException | NumberFormatException e){ 
-                System.out.println("Socket socket\nPrintWriter out\nInputStream rawIn\nFailed to connect Error: " + e.getMessage() +  "\n For host:" + host + " \n At port: " + port);
+                // 3. Print the response
+                System.out.println(response.protocol + " " + response.statusCode + " " + response.statusMessage);
+                response.rawHeaderlines.forEach(System.out::println);
+                System.out.println();
+                System.out.write(response.body, 0, response.body.length);   // raw bytes
+                System.out.println();
+                System.out.flush();
+
+            } catch (SocketTimeoutException e) {
+                // Must come BEFORE IOException (it is a subclass)
+                System.out.println("Timed out: no response from " + host + ":" + port
+                        + " (connect limit " + timeoutMs + " ms, read limit " + maxwaitMs + " ms).");
+            } catch (IOException e) {
+                System.out.println("Client error: " + e.getMessage()
+                        + "  (is the proxy running on " + host + ":" + port + "?)");
             }
-            
+
         } catch (IOException e) {
-            System.out.println("BufferedReader console: \n\tClient error: " + e.getMessage()
-                    + "  (is the server/proxy running on " + host + ":" + port + "?)");
+            System.out.println("Could not read from the console: " + e.getMessage());
         }
     }
 

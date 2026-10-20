@@ -2,7 +2,6 @@ package comp489.a1;
 
 import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.ServerSocket;
@@ -24,11 +23,14 @@ import java.nio.charset.StandardCharsets;
  *      binary files like JPEG - use byte streams), or returns a status message
  *      (404 Not Found, 400 Bad Request, ...).
  *
- * This scaffold accepts connections, parses the request line, and returns a
- * hard-coded 200 response so you can see the round-trip working. Replace the
- * TODO section with real file lookup + status handling.
+ * This server accepts connections, 
+ *      parses the request line, and returns a 200 response
+ * It prints out the request and response to show the round-trip working.
  * 
- * decode → resolve → normalize → verify → stat.
+ * Implementation of file lookup and status handling.
+ * 
+ * Process
+ * decode -> resolve -> normalize -> verify -> stat.
  *  Establish the root as an absolute, normalized Path once
  * 
  */
@@ -72,7 +74,7 @@ public class SimpleWebServer {
         }
     }
 
-    private static void sendBadRequest(OutputStream rawOut, String message) throws IOException {
+    private static void send400(OutputStream rawOut, String message) throws IOException {
         String body = message;
         String response = "HTTP/1.0 400 Bad Request\r\n"
                 + "Content-Type: text/plain\r\n"
@@ -132,17 +134,21 @@ public class SimpleWebServer {
         String[] parts = requestLine.split("\\s+");
         String method = (parts.length > 0) ? parts[0] : "";
         String path = (parts.length > 1) ? parts[1] : "/";
-        /* TODO (assignment):
+        /*
         * reject anything that is not GET with 400 Bad Request
         * translate 'path' to a file under a document root
-        * if the file exists: send "HTTP/1.0 200 OK", a Content-Type header,
-        * a blank line, then the file BYTES (read with a FileInputStream and
-        * write to rawOut so images survive)
+        * 
+        * if the file exists: 
+        *   send "HTTP/1.0 200 OK", 
+        *   a Content-Type header,
+        *   a blank line, 
+        *   then the file BYTES (read with a FileInputStream and write to rawOut so images survive)
+        * 
         * if not: send "HTTP/1.0 404 Not Found" + a short message
         */
         // 1. Reject anything that is not GET with 400 Bad Request
         if (!method.equals("GET")) {
-            sendBadRequest(rawOut, "Method '" + method + "' not supported. Only GET is allowed.");
+            send400(rawOut, "Method '" + method + "' not supported. Only GET is allowed.");
             return;
         }
         // 2. Strip the query string; Find indexOf('?')
@@ -152,7 +158,7 @@ public class SimpleWebServer {
             path = path.substring(0, queryIndex);
         }
         // 3.URL-decode
-        // %20 → space. URLDecoder.decode(path, StandardCharsets.UTF_8).
+        // %20 -> space. URLDecoder.decode(path, StandardCharsets.UTF_8).
         /*
         Two Notes: it also converts '+' to a space, 
             which is correct for query strings but technically wrong for path segments — fine for this assignment, but be aware. 
@@ -194,7 +200,7 @@ public class SimpleWebServer {
             //return result
         } catch (IllegalArgumentException e) {
             // Catching the RuntimeExceptions prevents them from bubbling up and killing the server
-            sendBadRequest(rawOut, "Bad Request: Invalid or malformed URL path.");
+            send400(rawOut, "Bad Request: Invalid or malformed URL path.");
             return; 
         }
         

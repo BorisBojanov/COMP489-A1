@@ -3,10 +3,8 @@ package comp489.a1;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.MalformedURLException;
 import java.net.Socket;
 import java.net.URI;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.net.URISyntaxException;
@@ -26,14 +24,14 @@ public class MyHttp {
     public String host;
     public int port;
     public String pathAndQuery;
-    public int contentLength;
+    public int contentLength = -1;          // in the constructor too: -1 = header absent
     public String contentType;
     public byte[] body;
     public List<String> rawHeaderlines = new ArrayList<>(); // cannot make this static because each instance has its own headers list
 
 
     public MyHttp() {
-        this.contentLength = 0;
+        this.contentLength = -1;
         this.contentType = "";
         this.body = new byte[0];
     }
@@ -125,7 +123,7 @@ public class MyHttp {
 
 
     private void parseStartLine(String line) {
-        String[] parts = line.split(" ");
+        String[] parts = line.split(" ", 3);   // limit 3 keeps "Not Found" whole
         if (parts.length < 2) {
             return;
         }
@@ -263,67 +261,21 @@ public class MyHttp {
         }
     }
 
-    // private String parseRequestLine(String requestLine) {
-    //     // Example request line: "GET /path/to/resource?query=1 HTTP/1.1"
-    //     String[] parts = requestLine.split(" ");
-    //     if (parts.length >= 3) {
-    //         String method = parts[0]; // e.g., "GET"
-    //         String rawUri = parts[1];  // e.g., "/path/to/resource?query=1"
-            
-    //         URI uri = parseUri(rawUri);
-    //         String path = uri.getPath();
-    //         String fullurl = fullURL(uri);
-
-    //         this.urlfull = fullurl; // Store the full URL for later use
-    //         this.method = method; // Store the HTTP method for later use
-    //         this.rawUri = rawUri; // Store the raw URI for later use in fullURL()
-    //         return path; // Return the requested path
-    //     }
-    //     return null;
-    // }
-
-    // private URI parseUri(String rawUri) {
-    //     // Represents the resource identifier as sent by the client
-    //     try {
-    //         URI uri = new URI(rawUri);
-    //         System.out.println("Parsed URI Path: " + uri.getPath());
-    //         System.out.println("Parsed URI Query: " + uri.getQuery());
-    //         return uri;
-    //     } catch (URISyntaxException e) {
-    //         e.printStackTrace();
-    //         return null;
-    //     }
-    // }
-
-    // private String fullURL(URI uri){
-    //    try {
-    //     if (host != null) {
-    //         // Determine the protocol (assume http for standard raw sockets unless handling SSL/TLS)
-    //         String protocol = "http://"; 
-            
-    //         // Construct the string representation of the full URL
-    //         String fullUrlString = protocol + host + rawUri;
-            
-    //         // Convert to java.net.URL objects
-    //         // URL fullUrl = new URL(fullUrlString);
-    //         URL fullUrl = uri.toURL();
-    //         System.out.println("Full URL String: " + fullUrlString);
-    //         System.out.println("Base URL (No query): " + fullUrl.getProtocol() + "://" + fullUrl.getHost() + ":" + fullUrl.getPort() + fullUrl.getPath());
-    //         return fullUrlString;
-    //     } else {
-    //         System.out.println("Could not parse the full URL: 'host' header is missing");
-    //     }
-    //    } catch (MalformedURLException e) {
-    //        e.printStackTrace();
-    //    }
-    //     return null;
-    // }
-
     // Parses the HTTP body and stores it into the HttpResponse object
     private void parseBody(InputStream rawIn) throws IOException {
         // For binary resources, read bytes directly from the input stream
         int contLength = this.contentLength;
-        byte[] bodyBuffer = new byte[contLength];
+
+        if (contLength < 0) {                       // no Content-Length header
+            if (this.method != null) {              // a REQUEST (e.g. GET at the proxy): no body.
+                this.body = new byte[0];            // Reading to EOF here would wait forever,
+                return;                             // because the client keeps the socket open.
+            }
+            this.body = rawIn.readAllBytes();       // a RESPONSE: HTTP/1.0 server closes when done
+            return;
+        }
+
+        byte[] bodyBuffer = new byte[contLength];   // only allocate once we know length >= 0
         int totalBytesRead = 0;
 
         while (totalBytesRead < contLength) {
